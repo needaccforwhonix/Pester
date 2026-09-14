@@ -44,6 +44,30 @@ Expected [int] 2, but got [int] 1." -replace "`r`n", "`n")
         { Should-Any -FilterScript { $_ -eq 1 } } | Verify-AssertionFailed
     }
 
+    It "Reports the empty-collection failure when called outside Invoke-Pester (regression)" {
+        # The empty-collection branch must not depend on a `$data` variable. It previously
+        # read an undefined `$data` and passed it to Get-AssertionMessage, which threw
+        # "You cannot call a method on a null-valued expression". A live Invoke-Pester run
+        # masks the bug because the framework keeps a `$data` variable in scope
+        # (Invoke-InNewScriptScope), so we run in a clean runspace with no active run to
+        # reproduce the real-world call, e.g. invoking the assertion from the console.
+        $modulePath = (Get-Module Pester | Select-Object -First 1).Path
+        $ps = [PowerShell]::Create()
+        try {
+            $null = $ps.AddScript(@"
+Import-Module '$modulePath' -Force
+try { @() | Should-Any -FilterScript { `$_ -eq 1 }; 'NO-FAILURE' }
+catch { `$_.FullyQualifiedErrorId + '||' + (`$_.Exception.Message -split [Environment]::NewLine)[0] }
+"@)
+            $result = @($ps.Invoke())
+        }
+        finally {
+            $ps.Dispose()
+        }
+
+        ($result -join '') | Verify-Equal "PesterAssertionFailed||Expected at least one item in collection to pass filter { `$_ -eq 1 }, but [Object[]] @() contains no items to compare."
+    }
+
     It "Can filter using variables from the sorrounding context" {
         $f = 1
         2, 4 | Should-Any { $_ / $f }
@@ -51,8 +75,8 @@ Expected [int] 2, but got [int] 1." -replace "`r`n", "`n")
 
     It "Validate messages" -TestCases @(
         @{ Actual = @(3, 4, 5); Message = "Expected at least one item in collection @(3, 4, 5) to pass filter { `$_ -eq 1 }, but none of the items passed the filter." }
-        @{ Actual = 3; Message = "Expected at least one item in collection 3 to pass filter { `$_ -eq 1 }, but none of the items passed the filter." }
-        @{ Actual = 3; Message = "Expected at least one item in collection 3 to pass filter { `$_ -eq 1 }, but none of the items passed the filter." }
+        @{ Actual = 3; Message = "Expected at least one item in collection @(3) to pass filter { `$_ -eq 1 }, but none of the items passed the filter." }
+        @{ Actual = 3; Message = "Expected at least one item in collection @(3) to pass filter { `$_ -eq 1 }, but none of the items passed the filter." }
     ) {
         $err = { $Actual | Should-Any -FilterScript { $_ -eq 1 } } | Verify-AssertionFailed
         $err.Exception.Message | Verify-Equal $Message
@@ -66,5 +90,32 @@ Expected [int] 2, but got [int] 1." -replace "`r`n", "`n")
         # Unbound scriptblocks would execute in Pester's internal module state
         $ex = { 1 | Should-Any ([scriptblock]::Create('')) } | Verify-Throw
         $ex.Exception.Message | Verify-Like 'Unbound scriptblock*'
+    }
+}
+
+Describe "Should-Any input hint" {
+    It 'Hints when a single hashtable is piped' {
+        $err = { @{ Name = 'Jakub' } | Should-Any { $_ -eq 1 } } | Verify-AssertionFailed
+        $err.Exception.Message | Verify-Like '*Hint: You piped a single*PowerShell treats a dictionary as a single object*GetEnumerator*'
+    }
+
+    It 'Hints when a hashtable is passed via -Actual' {
+        $err = { Should-Any -Actual @{ Name = 'Jakub' } -FilterScript { $_ -eq 1 } } | Verify-AssertionFailed
+        $err.Exception.Message | Verify-Like '*Hint: -Actual is a single*which is not a collection*'
+    }
+
+    It 'Does not hint for a genuine collection where none pass the filter' {
+        $err = { @(1, 2, 3) | Should-Any { $_ -eq 0 } } | Verify-AssertionFailed
+        ($err.Exception.Message -notlike '*Hint:*') | Verify-True
+    }
+
+    It 'Does not hint for a piped scalar, which is a valid one-item collection' {
+        $err = { 3 | Should-Any { $_ -eq 0 } } | Verify-AssertionFailed
+        ($err.Exception.Message -notlike '*Hint:*') | Verify-True
+    }
+
+    It 'Does not hint for piped $null, which is a valid one-item collection' {
+        $err = { $null | Should-Any { $_ -eq 1 } } | Verify-AssertionFailed
+        ($err.Exception.Message -notlike '*Hint:*') | Verify-True
     }
 }

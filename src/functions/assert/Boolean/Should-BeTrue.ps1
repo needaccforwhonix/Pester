@@ -3,6 +3,9 @@
     .SYNOPSIS
     Compares the actual value to a boolean $true. It does not convert input values to boolean, and will fail for any value is not $true.
 
+    .DESCRIPTION
+    This assertion only passes for the Boolean value `$true. It does not coerce input, so truthy non-Boolean values still fail.
+
     .PARAMETER Actual
     The actual value to compare to $true.
 
@@ -31,6 +34,10 @@
     .NOTES
     The `Should-BeTrue` assertion is the opposite of the `Should-BeFalse` assertion.
 
+    Use the `-ErrorAction` parameter to control soft-assertion behavior for this assertion. `-ErrorAction Continue` records the failure and lets the rest of the test run (a soft assertion), while `-ErrorAction Stop` fails the test immediately, for example to guard a precondition before continuing.
+
+    When `-ErrorAction` is not specified, the behavior comes from `Should.ErrorAction` in the configuration, which defaults to `Stop`. See https://pester.dev/docs/assertions/soft-assertions for more about soft assertions.
+
     .LINK
     https://pester.dev/docs/commands/Should-BeTrue
 
@@ -38,16 +45,16 @@
     https://pester.dev/docs/assertions
     #>
     [System.Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSUseProcessBlockForPipelineCommand', '')]
+    [CmdletBinding()]
     param (
-        [Parameter(ValueFromPipeline = $true)]
+        [Parameter(Position = 0, ValueFromPipeline = $true)]
         $Actual,
         [String]$Because
     )
 
-    $collectedInput = Collect-Input -ParameterInput $Actual -PipelineInput $local:Input -IsPipelineInput $MyInvocation.ExpectingInput -UnrollInput
-    $Actual = $collectedInput.Actual
+    $assert = New-ShouldAssertion -Caller $PSCmdlet -Actual $Actual -Buffer $local:Input
+    $Actual = $assert.Actual()
     if ($Actual -isnot [bool] -or -not $Actual) {
-        $Message = Get-AssertionMessage -Expected $true -Actual $Actual -Because $Because -DefaultMessage "Expected <expectedType> <expected>,<because> but got: <actualType> <actual>."
-        throw [Pester.Factory]::CreateShouldErrorRecord($Message, $MyInvocation.ScriptName, $MyInvocation.ScriptLineNumber, $MyInvocation.Line.TrimEnd([System.Environment]::NewLine), $true)
+        $assert.Fail("Expected <expectedType> <expected>,<because> but got: <actualType> <actual>.", @{ Expected = $true; Because = $Because })
     }
 }

@@ -273,6 +273,52 @@ i -PassThru:$PassThru {
 
     b "Exit codes" {
 
+        t "Exitcode is -1 when the test path is invalid" {
+            $temp = [IO.Path]::GetTempPath()
+            $testpath = Join-Path $temp "$([Guid]::NewGuid().Guid).txt"
+
+            try {
+                # Use an existing non-ps1 file to fail before test execution starts.
+                Set-Content -Path $testpath -Value 'not a PowerShell test file'
+                $sb = [scriptblock]::Create("
+                    `$global:LASTEXITCODE = 42
+                    Invoke-Pester -Path '$testpath' -Output None 2>`$null
+                    `"ExitCode=`$LASTEXITCODE`"
+                ")
+
+                $output = Invoke-InNewProcess -ScriptBlock $sb
+
+                $output[-1] | Verify-Equal 'ExitCode=-1'
+            }
+            finally {
+                Remove-Item -Path $testpath
+            }
+        }
+
+        t "Exitcode is -1 when an end plugin fails after a successful run" {
+            $sb = {
+                $pesterModule = Get-Module Pester
+                $plugin = & $pesterModule {
+                    # Fail after the passing test has completed.
+                    New-PluginObject -Name 'FailOnEnd' -End {
+                        throw 'Internal failure after a successful run.'
+                    }
+                }
+                & $pesterModule { param($p) $script:additionalPlugins = $p } $plugin
+
+                $global:LASTEXITCODE = 42
+                Invoke-Pester -Configuration ([PesterConfiguration]@{
+                        Run    = @{ ScriptBlock = { Describe 'd' { It 'i' { 1 | Should -Be 1 } } } }
+                        Output = @{ Verbosity = 'None' }
+                    }) 2>$null
+                "ExitCode=$LASTEXITCODE"
+            }
+
+            $output = Invoke-InNewProcess -ScriptBlock $sb
+
+            $output[-1] | Verify-Equal 'ExitCode=-1'
+        }
+
         t "Exitcode is set to 0 without exiting the process when tests pass, even when some executable fails within test" {
             $temp = [IO.Path]::GetTempPath()
             $testpath = Join-Path $temp "$([Guid]::NewGuid().Guid).tests.ps1"
@@ -291,13 +337,13 @@ i -PassThru:$PassThru {
 
                 $sb = [scriptblock]::Create("
                 try {
-                    Invoke-Pester -Path $testpath -EnableExit
+                    Invoke-Pester -Configuration ([PesterConfiguration]@{ Run = @{ Path = '$testpath'; Exit = `$true } })
                     `$exitCode = `$LASTEXITCODE
                 }
                 finally {
                     # exitcode was set to 99 in the test because the test passed,
                     # BUT after the run the exit code should be 0 because all tests pass
-                    # AND we should NOT exit the process even though the -EnableExit is used
+                    # AND we should NOT exit the process even though Run.Exit is enabled
                     # to allow running multiple successful runs in the same process.
                     # So to ensure we did not exit too early we set exitcode and
                     # check it in finally.
@@ -343,7 +389,7 @@ i -PassThru:$PassThru {
 
                 $sb = [scriptblock]::Create("
                 try {
-                    Invoke-Pester -Path $testpath -EnableExit
+                    Invoke-Pester -Configuration ([PesterConfiguration]@{ Run = @{ Path = '$testpath'; Exit = `$true } })
                     `$codeAfterPester = `$true
                 }
                 finally {
@@ -389,6 +435,70 @@ i -PassThru:$PassThru {
             finally {
                 $ps.Dispose()
             }
+        }
+    }
+
+    b '$WhatIfPreference does not break Pester' {
+        t 'Invoke-Pester succeeds when $WhatIfPreference is $true' {
+                $sb = {
+                    $WhatIfPreference = $true
+
+                    $PesterPreference = [PesterConfiguration]::Default
+                    $PesterPreference.Output.Verbosity = 'None'
+
+                    $container = New-PesterContainer -ScriptBlock {
+                        Describe 'd1' {
+                            It 'i1' {
+                                1 | Should -Be 1
+                            }
+                        }
+                    }
+                    $r = Invoke-Pester -Container $container -PassThru
+                    if ($r.FailedCount -ne 0) { throw "Expected 0 failures, got $($r.FailedCount)" }
+                    if ($r.PassedCount -ne 1) { throw "Expected 1 passed, got $($r.PassedCount)" }
+                }
+
+                $output = Invoke-InNewProcess $sb
+                $whatIfLines = $output | Select-String -Pattern 'What if:'
+                @($whatIfLines).Count | Verify-Equal 0
+        }
+    }
+
+    b 'User alias shadowing internal helper does not break Pester' {
+        # https://github.com/pester/Pester/issues/2113
+        # A user module (for example ListFunctions) can export an alias whose name collides with
+        # one of Pester's short internal helpers (like 'any'). PowerShell resolves aliases before
+        # functions and walks the scope chain up to global, so the alias shadowed our helper and
+        # Invoke-Pester crashed with a ParameterBindingException before running any test.
+        t 'Invoke-Pester succeeds when a global alias shadows the internal any helper' {
+            $sb = {
+                # Mimic ListFunctions' Assert-AnyObject: a command with a mandatory
+                # [ScriptBlock] $Condition parameter, exposed through the alias 'any'.
+                function Assert-AnyObject {
+                    param([Parameter(Mandatory)][ScriptBlock] $Condition)
+                }
+                Set-Alias -Name any -Value Assert-AnyObject -Scope Global
+
+                $PesterPreference = [PesterConfiguration]::Default
+                $PesterPreference.Output.Verbosity = 'None'
+
+                $container = New-PesterContainer -ScriptBlock {
+                    Describe 'd1' {
+                        It 'i1' {
+                            1 | Should -Be 1
+                        }
+                    }
+                }
+                $r = Invoke-Pester -Container $container -PassThru
+                if ($r.FailedCount -ne 0) { throw "Expected 0 failures, got $($r.FailedCount)" }
+                if ($r.PassedCount -ne 1) { throw "Expected 1 passed, got $($r.PassedCount)" }
+
+                # Reached only if Invoke-Pester ran to completion instead of crashing.
+                'REGRESSION-2113-OK'
+            }
+
+            $output = Invoke-InNewProcess $sb
+            $output | Select-String -SimpleMatch -Pattern 'REGRESSION-2113-OK' | Verify-NotNull
         }
     }
 }

@@ -274,199 +274,7 @@ InPesterModuleScope {
             }
 
             It 'JaCoCo report must be correct' {
-                [String]$jaCoCoReportXml = Get-JaCoCoReportXml -CommandCoverage $breakpoints -TotalMilliseconds 10000 -CoverageReport $coverageReport -Format "JaCoCo"
-                $jaCoCoReportXml = $jaCoCoReportXml -replace 'Pester \([^\)]*', 'Pester (date'
-                $jaCoCoReportXml = $jaCoCoReportXml -replace 'start="[0-9]*"', 'start=""'
-                $jaCoCoReportXml = $jaCoCoReportXml -replace 'dump="[0-9]*"', 'dump=""'
-                $jaCoCoReportXml = $jaCoCoReportXml -replace "$([System.Environment]::NewLine)", ''
-                $jaCoCoReportXml = $jaCoCoReportXml -replace "$(Split-Path -Path $root -Leaf)", 'CommonRoot'
-                $jaCoCoReportXml = $jaCoCoReportXml.Replace($root.Replace('\', '/'), '')
-                (Clear-WhiteSpace $jaCoCoReportXml) | Should -Be (Clear-WhiteSpace '
-                <?xml version="1.0" encoding="UTF-8" standalone="no"?>
-                <!DOCTYPE report PUBLIC "-//JACOCO//DTD Report 1.1//EN" "report.dtd">
-                <report name="Pester (date)">
-                    <sessioninfo id="this" start="" dump="" />
-                    <package name="CommonRoot">
-                        <class name="CommonRoot/TestScript" sourcefilename="TestScript.ps1">
-                            <method name="NestedFunction" desc="()" line="5">
-                                <counter type="INSTRUCTION" missed="0" covered="2" />
-                                <counter type="LINE" missed="0" covered="2" />
-                                <counter type="METHOD" missed="0" covered="1" />
-                            </method>
-                            <method name="FunctionOne" desc="()" line="9">
-                                <counter type="INSTRUCTION" missed="1" covered="6" />
-                                <counter type="LINE" missed="0" covered="5" />
-                                <counter type="METHOD" missed="0" covered="1" />
-                            </method>
-                            <method name="FunctionTwo" desc="()" line="22">
-                                <counter type="INSTRUCTION" missed="1" covered="0" />
-                                <counter type="LINE" missed="1" covered="0" />
-                                <counter type="METHOD" missed="1" covered="0" />
-                            </method>
-                            <method name="&lt;script&gt;" desc="()" line="25">
-                                <counter type="INSTRUCTION" missed="0" covered="3" />
-                                <counter type="LINE" missed="0" covered="3" />
-                                <counter type="METHOD" missed="0" covered="1" />
-                            </method>
-                            <method name="MyBaseClass" desc="()" line="31">
-                                <counter type="INSTRUCTION" missed="0" covered="1" />
-                                <counter type="LINE" missed="0" covered="1" />
-                                <counter type="METHOD" missed="0" covered="1" />
-                            </method>
-                            <method name="MyClass" desc="()" line="39">
-                                <counter type="INSTRUCTION" missed="0" covered="1" />
-                                <counter type="LINE" missed="0" covered="1" />
-                                <counter type="METHOD" missed="0" covered="1" />
-                            </method>
-                            <method name="MethodOne" desc="()" line="44">
-                                <counter type="INSTRUCTION" missed="0" covered="1" />
-                                <counter type="LINE" missed="0" covered="1" />
-                                <counter type="METHOD" missed="0" covered="1" />
-                            </method>
-                            <method name="MethodTwo" desc="()" line="49">
-                                <counter type="INSTRUCTION" missed="1" covered="0" />
-                                <counter type="LINE" missed="1" covered="0" />
-                                <counter type="METHOD" missed="1" covered="0" />
-                            </method>
-                            <counter type="INSTRUCTION" missed="3" covered="14" />
-                            <counter type="LINE" missed="2" covered="13" />
-                            <counter type="METHOD" missed="2" covered="6" />
-                            <counter type="CLASS" missed="0" covered="1" />
-                        </class>
-                        <class name="CommonRoot/TestScript2" sourcefilename="TestScript2.ps1">
-                            <method name="&lt;script&gt;" desc="()" line="1">
-                                <counter type="INSTRUCTION" missed="0" covered="1" />
-                                <counter type="LINE" missed="0" covered="1" />
-                                <counter type="METHOD" missed="0" covered="1" />
-                            </method>
-                            <counter type="INSTRUCTION" missed="0" covered="1" />
-                            <counter type="LINE" missed="0" covered="1" />
-                            <counter type="METHOD" missed="0" covered="1" />
-                            <counter type="CLASS" missed="0" covered="1" />
-                        </class>
-                        <class name="CommonRoot/TestScriptExit" sourcefilename="TestScriptExit.ps1">
-                            <method name="&lt;script&gt;" desc="()" line="2">
-                                <counter type="INSTRUCTION" missed="0" covered="2" />
-                                <counter type="LINE" missed="0" covered="1" />
-                                <counter type="METHOD" missed="0" covered="1" />
-                            </method>
-                            <counter type="INSTRUCTION" missed="0" covered="2" />
-                            <counter type="LINE" missed="0" covered="1" />
-                            <counter type="METHOD" missed="0" covered="1" />
-                            <counter type="CLASS" missed="0" covered="1" />
-                        </class>
-                        <class name="CommonRoot/TestScriptStatements" sourcefilename="TestScriptStatements.ps1">
-                            <method name="&lt;script&gt;" desc="()" line="3">
-                                <counter type="INSTRUCTION" missed="3" covered="16" />
-                                <counter type="LINE" missed="3" covered="14" />
-                                <counter type="METHOD" missed="0" covered="1" />
-                            </method>
-                            <counter type="INSTRUCTION" missed="3" covered="16" />
-                            <counter type="LINE" missed="3" covered="14" />
-                            <counter type="METHOD" missed="0" covered="1" />
-                            <counter type="CLASS" missed="0" covered="1" />
-                        </class>
-                        <sourcefile name="TestScript.ps1">
-                            <line nr="5" mi="0" ci="1" mb="0" cb="0" />
-                            <line nr="6" mi="0" ci="1" mb="0" cb="0" />
-                            <line nr="9" mi="0" ci="1" mb="0" cb="0" />
-                            <line nr="11" mi="0" ci="1" mb="0" cb="0" />
-                            <line nr="12" mi="0" ci="1" mb="0" cb="0" />
-                            <line nr="15" mi="1" ci="1" mb="0" cb="0" />
-                            <line nr="17" mi="0" ci="2" mb="0" cb="0" />
-                            <line nr="22" mi="1" ci="0" mb="0" cb="0" />
-                            <line nr="25" mi="0" ci="1" mb="0" cb="0" />
-                            <line nr="31" mi="0" ci="1" mb="0" cb="0" />
-                            <line nr="39" mi="0" ci="1" mb="0" cb="0" />
-                            <line nr="44" mi="0" ci="1" mb="0" cb="0" />
-                            <line nr="49" mi="1" ci="0" mb="0" cb="0" />
-                            <line nr="53" mi="0" ci="1" mb="0" cb="0" />
-                            <line nr="54" mi="0" ci="1" mb="0" cb="0" />
-                            <counter type="INSTRUCTION" missed="3" covered="14" />
-                            <counter type="LINE" missed="2" covered="13" />
-                            <counter type="METHOD" missed="2" covered="6" />
-                            <counter type="CLASS" missed="0" covered="1" />
-                        </sourcefile>
-                        <sourcefile name="TestScript2.ps1">
-                            <line nr="1" mi="0" ci="1" mb="0" cb="0" />
-                            <counter type="INSTRUCTION" missed="0" covered="1" />
-                            <counter type="LINE" missed="0" covered="1" />
-                            <counter type="METHOD" missed="0" covered="1" />
-                            <counter type="CLASS" missed="0" covered="1" />
-                        </sourcefile>
-                        <sourcefile name="TestScriptExit.ps1">
-                            <line nr="2" mi="0" ci="2" mb="0" cb="0" />
-                            <counter type="INSTRUCTION" missed="0" covered="2" />
-                            <counter type="LINE" missed="0" covered="1" />
-                            <counter type="METHOD" missed="0" covered="1" />
-                            <counter type="CLASS" missed="0" covered="1" />
-                        </sourcefile>
-                        <sourcefile name="TestScriptStatements.ps1">
-                            <line nr="3" mi="0" ci="2" mb="0" cb="0" />
-                            <line nr="6" mi="0" ci="1" mb="0" cb="0" />
-                            <line nr="11" mi="0" ci="1" mb="0" cb="0" />
-                            <line nr="12" mi="0" ci="1" mb="0" cb="0" />
-                            <line nr="13" mi="0" ci="1" mb="0" cb="0" />
-                            <line nr="14" mi="1" ci="0" mb="0" cb="0" />
-                            <line nr="17" mi="0" ci="1" mb="0" cb="0" />
-                            <line nr="18" mi="0" ci="1" mb="0" cb="0" />
-                            <line nr="19" mi="0" ci="1" mb="0" cb="0" />
-                            <line nr="21" mi="1" ci="0" mb="0" cb="0" />
-                            <line nr="24" mi="0" ci="1" mb="0" cb="0" />
-                            <line nr="25" mi="0" ci="1" mb="0" cb="0" />
-                            <line nr="26" mi="0" ci="1" mb="0" cb="0" />
-                            <line nr="28" mi="1" ci="0" mb="0" cb="0" />
-                            <line nr="32" mi="0" ci="1" mb="0" cb="0" />
-                            <line nr="33" mi="0" ci="2" mb="0" cb="0" />
-                            <line nr="36" mi="0" ci="1" mb="0" cb="0" />
-                            <counter type="INSTRUCTION" missed="3" covered="16" />
-                            <counter type="LINE" missed="3" covered="14" />
-                            <counter type="METHOD" missed="0" covered="1" />
-                            <counter type="CLASS" missed="0" covered="1" />
-                        </sourcefile>
-                        <counter type="INSTRUCTION" missed="6" covered="33" />
-                        <counter type="LINE" missed="5" covered="29" />
-                        <counter type="METHOD" missed="2" covered="9" />
-                        <counter type="CLASS" missed="0" covered="4" />
-                    </package>
-                    <package name="CommonRoot/TestSubFolder">
-                        <class name="CommonRoot/TestSubFolder/TestScript3"
-                            sourcefilename="TestSubFolder/TestScript3.ps1">
-                            <method name="&lt;script&gt;" desc="()" line="1">
-                                <counter type="INSTRUCTION" missed="0" covered="1" />
-                                <counter type="LINE" missed="0" covered="1" />
-                                <counter type="METHOD" missed="0" covered="1" />
-                            </method>
-                            <counter type="INSTRUCTION" missed="0" covered="1" />
-                            <counter type="LINE" missed="0" covered="1" />
-                            <counter type="METHOD" missed="0" covered="1" />
-                            <counter type="CLASS" missed="0" covered="1" />
-                        </class>
-                        <sourcefile name="TestSubFolder/TestScript3.ps1">
-                            <line nr="1" mi="0" ci="1" mb="0" cb="0" />
-                            <counter type="INSTRUCTION" missed="0" covered="1" />
-                            <counter type="LINE" missed="0" covered="1" />
-                            <counter type="METHOD" missed="0" covered="1" />
-                            <counter type="CLASS" missed="0" covered="1" />
-                        </sourcefile>
-                        <counter type="INSTRUCTION" missed="0" covered="1" />
-                        <counter type="LINE" missed="0" covered="1" />
-                        <counter type="METHOD" missed="0" covered="1" />
-                        <counter type="CLASS" missed="0" covered="1" />
-                    </package>
-                    <counter type="INSTRUCTION" missed="6" covered="34" />
-                    <counter type="LINE" missed="5" covered="30" />
-                    <counter type="METHOD" missed="2" covered="10" />
-                    <counter type="CLASS" missed="0" covered="5" />
-                </report>
-                ')
-            }
-
-            It 'JaCoCo for CoverageGutters report must be correct' {
-                # when using output for CoverageGutters in VSCodethe output needs to be slightly different,
-                # paths need to be reported relative to the output file and sourcefile name must be just the
-                # file name, adding a new formatter, instead of changing the default one
-                [String]$jaCoCoReportXml = Get-JaCoCoReportXml -CommandCoverage $breakpoints -TotalMilliseconds 10000 -CoverageReport $coverageReport -Format "CoverageGutters"
+                [String]$jaCoCoReportXml = Get-JaCoCoReportXml -CommandCoverage $breakpoints -TotalMilliseconds 10000 -CoverageReport $coverageReport -ReportRoot $TestDrive
                 $jaCoCoReportXml = $jaCoCoReportXml -replace 'Pester \([^\)]*', 'Pester (date'
                 $jaCoCoReportXml = $jaCoCoReportXml -replace 'start="[0-9]*"', 'start=""'
                 $jaCoCoReportXml = $jaCoCoReportXml -replace 'dump="[0-9]*"', 'dump=""'
@@ -654,7 +462,7 @@ InPesterModuleScope {
             }
 
             It 'Cobertura report must be correct' {
-                [String]$coberturaReportXml = Get-CoberturaReportXml -TotalMilliseconds 10000 -CoverageReport $coverageReport
+                [String]$coberturaReportXml = Get-CoberturaReportXml -TotalMilliseconds 10000 -CoverageReport $coverageReport -ReportRoot $TestDrive
                 $coberturaReportXml = $coberturaReportXml -replace 'timestamp="[0-9]*"', 'timestamp=""'
                 $coberturaReportXml = $coberturaReportXml -replace "$([System.Environment]::NewLine)", ''
                 $coberturaReportXml = $coberturaReportXml.Replace($root, 'CommonRoot')
@@ -789,14 +597,14 @@ InPesterModuleScope {
 
             It 'JaCoCo returns empty string when there are 0 analyzed commands' {
                 $coverageReport = [PSCustomObject] @{ NumberOfCommandsAnalyzed = 0 }
-                [String]$jaCoCoReportXml = Get-JaCoCoReportXml -CommandCoverage @{} -TotalMilliseconds 10000 -CoverageReport $coverageReport -Format "CoverageGutters"
+                [String]$jaCoCoReportXml = Get-JaCoCoReportXml -CommandCoverage @{} -TotalMilliseconds 10000 -CoverageReport $coverageReport -ReportRoot $TestDrive
                 $jaCoCoReportXml | Should -Not -Be $null
                 $jaCoCoReportXml | Should -Be ([String]::Empty)
             }
 
             It 'Cobertura returns empty string when there are 0 analyzed commands' {
                 $coverageReport = [PSCustomObject] @{ NumberOfCommandsAnalyzed = 0 }
-                [String]$coberturaReportXml = Get-CoberturaReportXml -CoverageReport $coverageReport -TotalMilliseconds 10000
+                [String]$coberturaReportXml = Get-CoberturaReportXml -CoverageReport $coverageReport -TotalMilliseconds 10000 -ReportRoot $TestDrive
                 $coberturaReportXml | Should -Not -Be $null
                 $coberturaReportXml | Should -Be ([String]::Empty)
             }
@@ -1204,6 +1012,72 @@ InPesterModuleScope {
                 }
             }
         }
+
+        # https://github.com/pester/Pester/issues/1143
+        # The '& $wrappedCmd @PSBoundParameters' line inside a steppable-pipeline proxy function
+        # must not be reported as missed. PowerShell never fires the breakpoint on that scriptblock
+        # (the command runs through the steppable pipeline), so we ignore both the inner command and
+        # the scriptblock-literal wrapper it lives in.
+        Context 'Steppable-pipeline proxy function using <description>' -Foreach @(
+            @{ UseBreakpoints = $true; Description = "breakpoints" }
+            @{ UseBreakpoints = $false; Description = "Profiler based cc" }
+        ) {
+            BeforeAll {
+                $proxyScriptPath = Join-Path -Path $root -ChildPath TestScriptProxy.ps1
+                Set-Content -Path $proxyScriptPath -Value @'
+                function Test-Proxy {
+                    [CmdletBinding()]
+                    param(
+                        [Parameter(Position = 0, ValueFromPipeline, ValueFromRemainingArguments)]
+                        [object] $InputObject
+                    )
+                    begin {
+                        $wrappedCmd = $ExecutionContext.InvokeCommand.GetCommand('Microsoft.PowerShell.Utility\Write-Output', [System.Management.Automation.CommandTypes]::Cmdlet)
+                        $scriptCmd = { & $wrappedCmd @PSBoundParameters }
+                        $steppablePipeline = $scriptCmd.GetSteppablePipeline($myInvocation.CommandOrigin)
+                        $steppablePipeline.Begin($PSCmdlet)
+                    }
+                    process {
+                        $steppablePipeline.Process($_)
+                    }
+                    end {
+                        $steppablePipeline.End()
+                    }
+                }
+
+                Test-Proxy 'hello' | Out-Null
+'@
+
+                $breakpoints = Enter-CoverageAnalysis -CodeCoverage @{ Path = $proxyScriptPath; Function = 'Test-Proxy' } -UseBreakpoints $UseBreakpoints
+
+                @($breakpoints).Count | Should -Be 5 -Because 'the & $wrappedCmd call and the scriptblock literal wrapping it are ignored'
+
+                if ($UseBreakpoints) {
+                    & $proxyScriptPath | Out-Null
+                }
+                else {
+                    $patched, $tracer = Start-TraceScript $breakpoints
+                    try { & $proxyScriptPath | Out-Null } finally { Stop-TraceScript -Patched $patched }
+                    $measure = $tracer.Hits
+                }
+
+                $coverageReport = Get-CoverageReport -CommandCoverage $breakpoints -Measure $measure
+            }
+
+            It 'Reports no missed commands for the steppable-pipeline proxy' {
+                $coverageReport.MissedCommands.Count | Should -Be 0
+            }
+
+            It 'Reports every analyzed command as executed' {
+                $coverageReport.NumberOfCommandsExecuted | Should -Be $coverageReport.NumberOfCommandsAnalyzed
+            }
+
+            AfterAll {
+                if ($UseBreakpoints) {
+                    Exit-CoverageAnalysis -CommandCoverage $breakpoints
+                }
+            }
+        }
     }
 
     Describe 'Path resolution for test files' {
@@ -1540,4 +1414,126 @@ InPesterModuleScope {
     #             }
     #         }
     #     }
+
+    Describe 'Get-ReportRoot' {
+        It 'resolves a relative CodeCoverage.ReportRoot to an absolute path (#2920)' {
+            $PesterPreference = [PesterConfiguration]::Default
+            $PesterPreference.CodeCoverage.ReportRoot = '.'
+            [System.IO.Path]::IsPathRooted((Get-ReportRoot)) | Should -BeTrue
+        }
+
+        It 'resolves a relative Run.RepoRoot fallback to an absolute path (#2920)' {
+            $PesterPreference = [PesterConfiguration]::Default
+            $PesterPreference.Run.RepoRoot = '.'
+            [System.IO.Path]::IsPathRooted((Get-ReportRoot)) | Should -BeTrue
+        }
+
+        It 'lets a relative ReportRoot still yield relative file paths in the report (#2920)' {
+            # Reproduces #2920: with a relative ReportRoot, Get-RelativePath could
+            # not strip the prefix from the absolute file paths, so the report kept
+            # the absolute paths. Get-ReportRoot now resolves to absolute first.
+            $PesterPreference = [PesterConfiguration]::Default
+            $PesterPreference.CodeCoverage.ReportRoot = '.'
+            $absRoot = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath('.')
+            $absFile = Join-Path -Path $absRoot -ChildPath (Join-Path 'sub' 'File.ps1')
+            $expected = 'sub{0}File.ps1' -f [System.IO.Path]::DirectorySeparatorChar
+            Get-RelativePath -Path $absFile -RelativeTo (Get-ReportRoot) | Should -Be $expected
+        }
+    }
+
+    Describe 'Get-TracerPoint' {
+        BeforeAll {
+            $tracerScriptPath = Join-Path -Path (Get-PSDrive TestDrive).Root -ChildPath TracerPointScript.ps1
+            Set-Content -Path $tracerScriptPath -Value @'
+function Get-Number {
+    $a = 1
+    return $a
+}
+'@
+            $tracerBreakpoints = Enter-CoverageAnalysis -CodeCoverage $tracerScriptPath -UseBreakpoints $false
+        }
+
+        It 'produces the points Start-TraceScript would build itself' {
+            $points = Get-TracerPoint -Breakpoints $tracerBreakpoints
+            $points.Count | Should -Be $tracerBreakpoints.Count
+            $points[0].Path | Should -Be $tracerScriptPath
+        }
+
+        It 'keeps the hit coordinates through the text form test.ps1 sends to its child processes' {
+            # test.ps1 writes the points to a file and the children rebuild them from it, dropping
+            # the command text. The tracer looks up hits by path and 'line:column', so that trip has
+            # to leave those untouched, otherwise the children report coordinates the parent cannot
+            # merge and their coverage is lost without any error.
+            $points = Get-TracerPoint -Breakpoints $tracerBreakpoints
+            $tab = [char] 9
+            $rebuilt = [System.Collections.Generic.List[Pester.Tracing.CodeCoveragePoint]]::new()
+            foreach ($point in $points) {
+                $row = @($point.Path, $point.Line, $point.Column, $point.BpLine, $point.BpColumn) -join $tab
+                $f = $row.Split($tab)
+                $rebuilt.Add([Pester.Tracing.CodeCoveragePoint]::Create($f[0], [int] $f[1], [int] $f[2], [int] $f[3], [int] $f[4], [string]::Empty))
+            }
+
+            $original = [Pester.Tracing.CodeCoverageTracer]::Create($points)
+            $child = [Pester.Tracing.CodeCoverageTracer]::Create($rebuilt)
+
+            @($child.Hits.Keys) | Should -Be @($original.Hits.Keys)
+            foreach ($path in $original.Hits.Keys) {
+                @($child.Hits[$path].Keys) | Should -Be @($original.Hits[$path].Keys)
+            }
+        }
+    }
+
+    Describe 'Resolve-CodeCoverageConfiguration report root resolution (#2923)' {
+        # A relative ReportRoot (or its Run.RepoRoot fallback) must be captured against the
+        # location Invoke-Pester was called from, during configuration validation, not against
+        # whatever location a test leaves behind. The report is written after all tests ran, so
+        # resolving only then (in Get-ReportRoot) would break when a test changes the location.
+        BeforeAll {
+            $invocationDir = (New-Item -ItemType Directory -Path (Join-Path $TestDrive 'invocation-dir') -Force).FullName
+            $elsewhere = (New-Item -ItemType Directory -Path (Join-Path $TestDrive 'elsewhere') -Force).FullName
+        }
+
+        It 'captures a relative CodeCoverage.ReportRoot at configuration time so a later location change does not move it' {
+            $PesterPreference = [PesterConfiguration]::Default
+            $PesterPreference.CodeCoverage.ReportRoot = '.'
+
+            Push-Location -Path $invocationDir
+            try {
+                Resolve-CodeCoverageConfiguration
+            }
+            finally {
+                Pop-Location
+            }
+
+            # A test changed the current location before the report is written.
+            Push-Location -Path $elsewhere
+            try {
+                Get-ReportRoot | Should -Be $invocationDir
+            }
+            finally {
+                Pop-Location
+            }
+        }
+
+        It 'captures a relative Run.RepoRoot fallback at configuration time so a later location change does not move it' {
+            $PesterPreference = [PesterConfiguration]::Default
+            $PesterPreference.Run.RepoRoot = '.'
+
+            Push-Location -Path $invocationDir
+            try {
+                Resolve-CodeCoverageConfiguration
+            }
+            finally {
+                Pop-Location
+            }
+
+            Push-Location -Path $elsewhere
+            try {
+                Get-ReportRoot | Should -Be $invocationDir
+            }
+            finally {
+                Pop-Location
+            }
+        }
+    }
 }

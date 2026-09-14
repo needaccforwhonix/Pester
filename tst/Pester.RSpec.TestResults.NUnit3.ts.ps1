@@ -876,6 +876,53 @@ i -PassThru:$PassThru {
         }
     }
 
+    b 'When a container fails during discovery it is reported' {
+        # https://github.com/pester/Pester/issues/2664
+        # Passing an array directly to It (instead of via -TestCases) throws during discovery.
+        $sb = {
+            Describe 'Count' {
+                It 'Returns sum' @(
+                    @{ Name = 1; Expected = 2 }
+                    @{ Name = 2; Expected = 4 }
+                ) {
+                    $Name + $Name | Should -Be $Expected
+                }
+            }
+        }
+
+        t 'discovery-failed container is written as a failed test-suite carrying its error' {
+            $r = Invoke-Pester -Configuration ([PesterConfiguration]@{ Run = @{ ScriptBlock = $sb; PassThru = $true }; Output = @{ Verbosity = 'None' } })
+
+            # sanity: the container failed during discovery and did not run any tests
+            $r.Containers[0].ShouldRun | Verify-False
+            $r.Containers[0].Result | Verify-Equal 'Failed'
+
+            $xmlResult = $r | ConvertTo-NUnitReport -Format NUnit3
+
+            # the run totals reflect the failure instead of reporting Inconclusive or zero
+            $xmlResult.'test-run'.result | Verify-Equal 'Failed'
+            $xmlResult.'test-run'.failed | Verify-Equal '1'
+            $xmlResult.'test-run'.total | Verify-Equal '1'
+
+            $xmlContainer = $xmlResult.'test-run'.'test-suite'
+            $xmlContainer.result | Verify-Equal 'Failed'
+            $xmlContainer.runstate | Verify-Equal 'NotRunnable'
+            $xmlContainer.failed | Verify-Equal '1'
+            $xmlContainer.failure | Verify-NotNull
+            $xmlContainer.failure.message.InnerText | Verify-Like '*ScriptBlock*'
+        }
+
+        t 'discovery-failure report validates against the nunit 3 schema' {
+            $r = Invoke-Pester -Configuration ([PesterConfiguration]@{ Run = @{ ScriptBlock = $sb; PassThru = $true }; Output = @{ Verbosity = 'None' } })
+
+            $xmlResult = [xml] ($r | ConvertTo-NUnitReport -Format NUnit3)
+
+            $xmlResult.Schemas.XmlResolver = New-Object System.Xml.XmlUrlResolver
+            $xmlResult.Schemas.Add($null, $schemaPath) > $null
+            $xmlResult.Validate( { throw $args[1].Exception })
+        }
+    }
+
     b 'Outputing into a file' {
         t 'Write NUnit3 report using TestResult.OutputFormat' {
             $sb = {
@@ -928,6 +975,75 @@ i -PassThru:$PassThru {
         }
     }
 
+    b 'TestResult.OutputEncoding' {
+        # https://github.com/pester/Pester/issues/2452
+        t 'Defaults to utf8 with BOM and an utf-8 xml declaration' {
+            try {
+                $xml = [IO.Path]::GetTempFileName()
+                $null = Invoke-Pester -Configuration ([PesterConfiguration]@{
+                        Run        = @{ ScriptBlock = { Describe 'd' { It 'i' { $true | Should -Be $true } } }; PassThru = $true }
+                        Output     = @{ Verbosity = 'None' }
+                        TestResult = @{ Enabled = $true; OutputFormat = 'NUnit3'; OutputPath = $xml }
+                    })
+
+                $bytes = [IO.File]::ReadAllBytes($xml)
+                # utf-8 BOM
+                $bytes[0] | Verify-Equal 0xEF
+                $bytes[1] | Verify-Equal 0xBB
+                $bytes[2] | Verify-Equal 0xBF
+                ([Text.Encoding]::UTF8.GetString($bytes)) -match 'encoding="utf-8"' | Verify-True
+            }
+            finally {
+                if (Test-Path $xml) { Remove-Item $xml -Force -ErrorAction Ignore }
+            }
+        }
+
+        t 'Writes the report using the configured TestResult.OutputEncoding (utf-16)' {
+            try {
+                $xml = [IO.Path]::GetTempFileName()
+                $null = Invoke-Pester -Configuration ([PesterConfiguration]@{
+                        Run        = @{ ScriptBlock = { Describe 'd' { It 'i' { $true | Should -Be $true } } }; PassThru = $true }
+                        Output     = @{ Verbosity = 'None' }
+                        TestResult = @{ Enabled = $true; OutputFormat = 'NUnit3'; OutputPath = $xml; OutputEncoding = 'utf-16' }
+                    })
+
+                $bytes = [IO.File]::ReadAllBytes($xml)
+                # utf-16 LE BOM
+                $bytes[0] | Verify-Equal 0xFF
+                $bytes[1] | Verify-Equal 0xFE
+                # declaration must match the actual encoding, not be hardcoded to utf-8
+                ([Text.Encoding]::Unicode.GetString($bytes)) -match 'encoding="utf-16"' | Verify-True
+            }
+            finally {
+                if (Test-Path $xml) { Remove-Item $xml -Force -ErrorAction Ignore }
+            }
+        }
+
+        t 'Falls back to utf8 and warns when TestResult.OutputEncoding is invalid' {
+            try {
+                $xml = [IO.Path]::GetTempFileName()
+                $c = [PesterConfiguration]@{
+                    Run        = @{ ScriptBlock = { Describe 'd' { It 'i' { $true | Should -Be $true } } }; PassThru = $true }
+                    Output     = @{ Verbosity = 'None' }
+                    TestResult = @{ Enabled = $true; OutputFormat = 'NUnit3'; OutputPath = $xml; OutputEncoding = 'not-a-real-encoding' }
+                }
+
+                $warnings = @()
+                $r = Invoke-Pester -Configuration $c -WarningVariable warnings 3> $null
+
+                $r.Result | Verify-Equal 'Passed'
+                $bytes = [IO.File]::ReadAllBytes($xml)
+                $bytes[0] | Verify-Equal 0xEF
+                $bytes[1] | Verify-Equal 0xBB
+                $bytes[2] | Verify-Equal 0xBF
+                ($warnings -match "TestResult.OutputEncoding 'not-a-real-encoding'") | Verify-NotNull
+            }
+            finally {
+                if (Test-Path $xml) { Remove-Item $xml -Force -ErrorAction Ignore }
+            }
+        }
+    }
+
     b 'Blocks with test and child-blocks' {
         t 'Should validate against the nunit 3 schema' {
             # https://github.com/pester/Pester/issues/2143
@@ -953,6 +1069,44 @@ i -PassThru:$PassThru {
             $xmlResult.Schemas.XmlResolver = New-Object System.Xml.XmlUrlResolver
             $xmlResult.Schemas.Add($null, $schemaPath) > $null
             $xmlResult.Validate({ throw $args[1].Exception })
+        }
+    }
+
+    # Regression test for https://github.com/pester/Pester/issues/2649
+    # When a test outputs an object whose ToString() throws, the NUnit3 report
+    # writer (Format-CDataString) would crash, losing the entire report.
+    # The fix wraps ToString() in try/catch and uses a fallback string.
+    b "NUnit3 report handles objects with broken ToString()" {
+        t "should produce valid report when test output object throws on ToString" {
+            $sb = {
+                Describe 'Describe' {
+                    It 'Outputs broken object' {
+                        # Output an object whose ToString() will throw
+                        $broken = [PSCustomObject]@{ Name = 'X' }
+                        $broken | Add-Member -MemberType ScriptMethod -Name ToString -Force -Value {
+                            throw [System.InvalidOperationException]::new('ToString failed')
+                        }
+                        $broken
+                        $true | Should -Be $true
+                    }
+                }
+            }
+
+            $r = Invoke-Pester -Configuration ([PesterConfiguration]@{
+                Run    = @{ ScriptBlock = $sb; PassThru = $true }
+                Output = @{ Verbosity = 'None' }
+            })
+
+            # The test itself should pass
+            $r.Result | Verify-Equal 'Passed'
+
+            # Converting to NUnit3 report should NOT throw
+            $xmlResult = $r | ConvertTo-NUnitReport -Format NUnit3
+
+            # The output section should contain the fallback message
+            $xmlTest = $xmlResult.'test-run'.'test-suite'.'test-suite'.'test-case'
+            $xmlTest.result | Verify-Equal 'Passed'
+            $xmlTest.output.'#cdata-section' | Verify-Like '*ToString() failed*'
         }
     }
 }

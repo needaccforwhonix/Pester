@@ -22,24 +22,57 @@ function Export-PesterResult {
     param (
         [Pester.Run] $Result,
         [string] $Path,
-        [string] $Format
+        [string] $Format,
+        [string] $Encoding = 'UTF8'
     )
 
     switch -Wildcard ($Format) {
         'NUnit2.5' {
-            Export-XmlReport -Result $Result -Path $Path -Format $Format
+            Export-XmlReport -Result $Result -Path $Path -Format $Format -Encoding $Encoding
         }
 
         'NUnit3' {
-            Export-XmlReport -Result $Result -Path $Path -Format $Format
+            Export-XmlReport -Result $Result -Path $Path -Format $Format -Encoding $Encoding
         }
 
         '*Xml' {
-            Export-XmlReport -Result $Result -Path $Path -Format $Format
+            Export-XmlReport -Result $Result -Path $Path -Format $Format -Encoding $Encoding
         }
 
         default {
             throw "'$Format' is not a valid Pester export format."
+        }
+    }
+}
+
+function Get-OutputEncodingFromName {
+    # Converts a PowerShell-style encoding name (the values accepted by Out-File -Encoding, e.g. 'UTF8',
+    # 'UTF8BOM', 'Unicode', 'UTF32', 'ASCII') or a .NET web name (e.g. 'utf-16') to a [System.Text.Encoding]
+    # instance for use with XmlWriterSettings.Encoding, so the xml encoding-declaration and the bytes on disk
+    # match. Falls back to UTF-8 (with BOM, the historical default) and warns when the value is empty or not a
+    # recognized encoding. (#2452, #2450)
+    param (
+        [string] $Encoding,
+        [string] $OptionName = 'TestResult.OutputEncoding'
+    )
+
+    switch -Regex ($Encoding) {
+        '^\s*$' { return [System.Text.UTF8Encoding]::new($true) }
+        '(?i)^utf-?8(-?bom)?$' { return [System.Text.UTF8Encoding]::new($true) }
+        '(?i)^utf-?8-?nobom$' { return [System.Text.UTF8Encoding]::new($false) }
+        '(?i)^(unicode|utf-?16(le)?)$' { return [System.Text.UnicodeEncoding]::new($false, $true) }
+        '(?i)^(bigendianunicode|utf-?16be)$' { return [System.Text.UnicodeEncoding]::new($true, $true) }
+        '(?i)^(utf-?32(le)?)$' { return [System.Text.UTF32Encoding]::new($false, $true) }
+        '(?i)^(bigendianutf32|utf-?32be)$' { return [System.Text.UTF32Encoding]::new($true, $true) }
+        '(?i)^ascii$' { return [System.Text.Encoding]::ASCII }
+        default {
+            try {
+                return [System.Text.Encoding]::GetEncoding($Encoding)
+            }
+            catch {
+                & $SafeCommands['Write-Warning'] "$OptionName '$Encoding' is not a valid encoding name, falling back to 'UTF8'. $($_.Exception.Message)"
+                return [System.Text.UTF8Encoding]::new($true)
+            }
         }
     }
 }
@@ -154,7 +187,9 @@ function Export-XmlReport {
 
         [parameter(Mandatory = $true)]
         [ValidateSet('NUnitXml', 'NUnit2.5', 'NUnit3', 'JUnitXml')]
-        [string] $Format
+        [string] $Format,
+
+        [string] $Encoding = 'UTF8'
     )
 
     if ('NUnit2.5' -eq $Format) {
@@ -169,6 +204,7 @@ function Export-XmlReport {
     $settings = [Xml.XmlWriterSettings] @{
         Indent              = $true
         NewLineOnAttributes = $false
+        Encoding            = Get-OutputEncodingFromName -Encoding $Encoding
     }
 
     $xmlFile = $null
@@ -463,15 +499,36 @@ function Get-ErrorForXmlReport ($TestResult) {
     }
 }
 
+function Test-ContainerFailedDiscovery {
+    param($Container)
+    # A container that failed during discovery never runs its tests (ShouldRun = $false), but it
+    # is marked Failed and keeps the discovery error in its ErrorRecord. The report writers would
+    # otherwise skip it and drop the failure from the exported TestResult XML. (#2664)
+    (-not $Container.ShouldRun) -and ($Container.Result -eq 'Failed') -and ($Container.ErrorRecord.Count -gt 0)
+}
+
+function Get-DiscoveryFailedContainerCount {
+    param([Pester.Run] $Result)
+    # Number of containers that failed during discovery, so the exported report totals count
+    # them instead of reporting zero. (#2664)
+    $count = 0
+    foreach ($container in $Result.Containers) {
+        if (Test-ContainerFailedDiscovery -Container $container) {
+            $count++
+        }
+    }
+    $count
+}
+
 function Get-RunTimeEnvironment {
     # based on what we found during startup, use the appropriate cmdlet
     $computerName = $env:ComputerName
     $userName = $env:Username
     if ($null -ne $SafeCommands['Get-CimInstance']) {
-        $osSystemInformation = (& $SafeCommands['Get-CimInstance'] Win32_OperatingSystem)
+        $osSystemInformation = (& $SafeCommands['Get-CimInstance'] Win32_OperatingSystem -ErrorAction Ignore)
     }
     elseif ($null -ne $SafeCommands['Get-WmiObject']) {
-        $osSystemInformation = (& $SafeCommands['Get-WmiObject'] Win32_OperatingSystem)
+        $osSystemInformation = (& $SafeCommands['Get-WmiObject'] Win32_OperatingSystem -ErrorAction Ignore)
     }
     elseif ($IsMacOS -or $IsLinux) {
         $osSystemInformation = @{
@@ -492,7 +549,9 @@ function Get-RunTimeEnvironment {
             # well, we tried
         }
     }
-    else {
+
+    # Fall back to unknown values if WMI/CIM returned null (e.g. access denied when not running as Administrator)
+    if ($null -eq $osSystemInformation) {
         $osSystemInformation = @{
             Name    = 'Unknown'
             Version = '0.0.0.0'
@@ -526,7 +585,7 @@ function Get-TestResultPlugin {
 
         $run = $Context.TestRun
         $testResultConfig = $PesterPreference.TestResult
-        Export-PesterResult -Result $run -Path $testResultConfig.OutputPath.Value -Format $testResultConfig.OutputFormat.Value
+        Export-PesterResult -Result $run -Path $testResultConfig.OutputPath.Value -Format $testResultConfig.OutputFormat.Value -Encoding $testResultConfig.OutputEncoding.Value
     }
 
     New-PluginObject @p
@@ -537,4 +596,10 @@ function Resolve-TestResultConfiguration {
     if ($PesterPreference.TestResult.OutputFormat.Value -notin $supportedFormats) {
         throw (Get-StringOptionErrorMessage -OptionPath 'TestResult.OutputFormat' -SupportedValues $supportedFormats -Value $PesterPreference.TestResult.OutputFormat.Value)
     }
+
+    # Resolve the output path to an absolute path now, while the current location still points at
+    # the directory Invoke-Pester was called from. The report is written after all tests ran, and a
+    # test can change the current location (e.g. Set-Location), so a relative path would resolve
+    # against the wrong directory, or one that no longer exists (#2641).
+    $PesterPreference.TestResult.OutputPath = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($PesterPreference.TestResult.OutputPath.Value)
 }

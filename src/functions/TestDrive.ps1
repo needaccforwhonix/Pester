@@ -112,12 +112,49 @@ function Clear-TestDrive {
 
         Remove-TestDriveSymbolicLinks -Path $TestDrivePath
 
-        foreach ($i in [IO.Directory]::GetFileSystemEntries($TestDrivePath, '*.*', [System.IO.SearchOption]::AllDirectories)) {
-            if ($Exclude -contains $i) {
-                continue
-            }
+        $allCurrent = [IO.Directory]::GetFileSystemEntries($TestDrivePath, '*.*', [System.IO.SearchOption]::AllDirectories)
 
-            & $SafeCommands['Remove-Item'] -Force -Recurse $i -ErrorAction Ignore
+        # Collect new items (those not in the snapshot taken before the test)
+        $newItems = foreach ($i in $allCurrent) {
+            if ($Exclude -notcontains $i) {
+                $i
+            }
+        }
+
+        if (-not $newItems) {
+            return
+        }
+
+        # Build a set of new item paths for O(1) parent lookups
+        $newItemSet = [System.Collections.Generic.HashSet[string]]::new(
+            [string[]]@($newItems),
+            [System.StringComparer]::OrdinalIgnoreCase)
+
+        # Only delete "root" new items (those whose parent directory is not also a new item).
+        # Deleting recursively removes all descendants in one call, avoiding redundant
+        # deletions of already-deleted children.
+        foreach ($item in $newItemSet) {
+            $parent = [IO.Path]::GetDirectoryName($item)
+            if (-not $newItemSet.Contains($parent)) {
+                # .NET deletes are ~5x faster than Remove-Item and treat the path literally, so
+                # bracket or wildcard characters in file names no longer glob (Remove-Item -Path
+                # left a file named like 'file[1].txt' behind). Directory.Delete removes reparse
+                # points (symlinks, junctions) without following them into their target, same as
+                # Remove-TestDrive already does for the whole drive. Read-only or locked items throw
+                # and fall back to Remove-Item, which keeps the previous -Force -ErrorAction Ignore
+                # semantics for those.
+                try {
+                    if ([IO.Directory]::Exists($item)) {
+                        [IO.Directory]::Delete($item, $true)
+                    }
+                    else {
+                        [IO.File]::Delete($item)
+                    }
+                }
+                catch {
+                    & $SafeCommands['Remove-Item'] -LiteralPath $item -Force -Recurse -ErrorAction Ignore
+                }
+            }
         }
     }
 }
@@ -150,11 +187,10 @@ function Remove-TestDriveSymbolicLinks ([String] $Path) {
 
     # issue 621 was fixed before PowerShell 6.1
     # now there is an issue with calling the Delete method in recent (6.1) builds of PowerShell
-    if ((GetPesterPSVersion) -ge 6) {
+    if ((GetPesterPSVersion) -ge 7) {
         return
     }
 
-    # powershell 2-compatible
     $reparsePoint = [System.IO.FileAttributes]::ReparsePoint
     & $SafeCommands['Get-ChildItem'] -Recurse -Path $Path |
         & $SafeCommands['Where-Object'] { ($_.Attributes -band $reparsePoint) -eq $reparsePoint } |

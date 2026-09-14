@@ -72,6 +72,9 @@ $script:SafeCommands['Set-DynamicParameterVariable'] = $ExecutionContext.Session
     'Should-BeSame'
     'Should-HaveType'
 
+    # hashtable
+    'Should-BeHashtable'
+
     # string
     'Should-BeString'
     'Should-NotBeString'
@@ -83,6 +86,8 @@ $script:SafeCommands['Set-DynamicParameterVariable'] = $ExecutionContext.Session
 
     'Should-BeLikeString'
     'Should-NotBeLikeString'
+    'Should-MatchString'
+    'Should-NotMatchString'
 
     'Should-Invoke'
     'Should-NotInvoke'
@@ -101,6 +106,9 @@ $script:SafeCommands['Set-DynamicParameterVariable'] = $ExecutionContext.Session
     'Export-JUnitReport'
     'ConvertTo-JUnitReport'
     'ConvertTo-Pester4Result'
+
+    # custom assertions
+    'New-ShouldAssertion'
 
     # helpers
     'New-MockObject'

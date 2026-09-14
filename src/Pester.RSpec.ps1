@@ -8,6 +8,12 @@
         [string] $Extension
     )
 
+    # Folders we never want to descend into during discovery. .git in particular can
+    # hold hundreds of thousands of small files on a real repo; enumerating them only
+    # to filter the results out later wastes a lot of time, so the recursive walk
+    # below stops as soon as it sees one of these names.
+    $skipFolders = @('.git', '.svn', '.hg')
+
     $files = foreach ($p in $Path) {
         if ([String]::IsNullOrWhiteSpace($p)) {
             continue
@@ -29,8 +35,11 @@
 
             foreach ($item in $items) {
                 if ($item.PSIsContainer) {
-                    # this is an existing directory search it for tests file
-                    & $SafeCommands['Get-ChildItem'] -Recurse -Path $item -Filter "*$Extension" -File
+                    # Walk the directory tree ourselves so we never open the contents of
+                    # VCS folders. Get-ChildItem -Force returns hidden items so this works
+                    # both for dot-prefixed folders on Linux and for folders with the
+                    # Hidden file attribute on Windows.
+                    Find-FileInDirectory -Directory $item -Extension $Extension -SkipFolders $skipFolders
                 }
                 elseif ("FileSystem" -ne $item.PSProvider.Name) {
                     # item is not a directory and exists but is not a file so we are not interested
@@ -58,9 +67,22 @@
             }
         }
         else {
-            # this is a path that does not exist so let's hope it is
-            # a wildcarded path that will resolve to some files
-            & $SafeCommands['Get-ChildItem'] -Recurse -Path $p -Filter "*$Extension" -File
+            # The path didn't resolve to anything, so let Get-ChildItem try to expand
+            # whatever shape it is (typically a wildcard pattern that currently has no
+            # matches). Use -Force so hidden folders are still considered, and strip any
+            # results that landed inside a VCS metadata directory.
+            foreach ($f in (& $SafeCommands['Get-ChildItem'] -Recurse -Path $p -Filter "*$Extension" -File -Force)) {
+                $inSkipFolder = $false
+                $parent = $f.Directory
+                while ($null -ne $parent) {
+                    if ($skipFolders -contains $parent.Name) {
+                        $inSkipFolder = $true
+                        break
+                    }
+                    $parent = $parent.Parent
+                }
+                if (-not $inSkipFolder) { $f }
+            }
         }
     }
 
@@ -70,20 +92,66 @@
     Filter-Excluded -Files $uniqueFiles -ExcludePath $ExcludePath | & $SafeCommands['Where-Object'] { $_ }
 }
 
+function Find-FileInDirectory {
+    param(
+        [Parameter(Mandatory = $true)]
+        [System.IO.DirectoryInfo] $Directory,
+        [Parameter(Mandatory = $true)]
+        [string] $Extension,
+        [string[]] $SkipFolders
+    )
+
+    # Files in this directory first, then descend into each subdirectory that we are
+    # allowed to enter. The set returned is equivalent to
+    # `Get-ChildItem -Recurse -Filter "*$Extension" -File -Force` rooted at $Directory,
+    # minus anything under one of $SkipFolders.
+    & $SafeCommands['Get-ChildItem'] -LiteralPath $Directory.FullName -Filter "*$Extension" -File -Force
+
+    foreach ($d in (& $SafeCommands['Get-ChildItem'] -LiteralPath $Directory.FullName -Directory -Force)) {
+        if ($SkipFolders -contains $d.Name) { continue }
+        Find-FileInDirectory -Directory $d -Extension $Extension -SkipFolders $SkipFolders
+    }
+}
+
 function Filter-Excluded ($Files, $ExcludePath) {
     if ($null -eq $ExcludePath -or @($ExcludePath).Length -eq 0) {
         return @($Files)
     }
+
+    # Directory exclusions are compared as path prefixes below. Match them case-insensitively
+    # on Windows, and case-sensitively on Linux and macOS where the filesystem is case-sensitive.
+    $pathComparison = if ('Windows' -eq (GetPesterOs)) {
+        [System.StringComparison]::OrdinalIgnoreCase
+    }
+    else {
+        [System.StringComparison]::Ordinal
+    }
+
+    # normalize backslashes for cross-platform ease of use
+    $exclusions = @($ExcludePath) -replace "/", "\"
 
     foreach ($file in @($Files)) {
         # normalize backslashes for cross-platform ease of use
         $p = $file.FullName -replace "/", "\"
         $excluded = $false
 
-        foreach ($exclusion in (@($ExcludePath) -replace "/", "\")) {
+        foreach ($exclusion in $exclusions) {
+            # Wildcard patterns and exact file paths keep the original -like behavior.
             if ($p -like $exclusion) {
                 $excluded = $true
-                continue
+                break
+            }
+
+            # A directory exclusion (e.g. C:\proj\excluded) should exclude every file under it,
+            # see https://github.com/pester/Pester/issues/1575. Trailing separators are trimmed so
+            # 'C:\proj\excluded' and 'C:\proj\excluded\' behave the same. Wildcard patterns are
+            # already handled by -like above.
+            if (-not [System.Management.Automation.WildcardPattern]::ContainsWildcardCharacters($exclusion)) {
+                $prefix = $exclusion.TrimEnd("\") + "\"
+                if ($p.StartsWith($prefix, $pathComparison)) {
+                    $excluded = $true
+                    break
+                }
             }
         }
 
@@ -135,7 +203,7 @@ function Add-RSpecBlockObjectProperties ($BlockObject) {
     }
 }
 
-function PostProcess-RspecTestRun ($TestRun) {
+function PostProcess-RspecTestRun ($TestRun, [switch] $Parallel, [TimeSpan] $RunDuration) {
     $discoveryOnly = $PesterPreference.Run.SkipRun.Value
 
     Fold-Run $Run -OnTest {
@@ -176,6 +244,9 @@ function PostProcess-RspecTestRun ($TestRun) {
         $b.Result = if ($b.Skip) {
             "Skipped"
         }
+        elseif (0 -lt $b.ErrorRecord.Count) {
+            "Failed"
+        }
         elseif ($b.Passed) {
             "Passed"
         }
@@ -206,11 +277,11 @@ function PostProcess-RspecTestRun ($TestRun) {
         $b.result = if ($b.Skip) {
             "Skipped"
         }
-        elseif ($b.Passed) {
-            "Passed"
-        }
         elseif (0 -lt $b.ErrorRecord.Count) {
             "Failed"
+        }
+        elseif ($b.Passed) {
+            "Passed"
         }
         elseif (-not $discoveryOnly -and $b.ShouldRun -and (-not $b.Executed -or -not $b.Passed)) {
             "Failed"
@@ -234,6 +305,19 @@ function PostProcess-RspecTestRun ($TestRun) {
         $TestRun.UserDuration += $b.UserDuration
         $TestRun.FrameworkDuration += $b.FrameworkDuration
         $TestRun.DiscoveryDuration += $b.DiscoveryDuration
+    }
+
+    if ($Parallel) {
+        # In a file-parallel run the containers overlap in wall-clock time, so the summed
+        # container durations above overstate the run. Use the orchestrator's measured
+        # wall-clock as the total instead, and blank the per-phase run totals - a single
+        # wall-clock figure for user, framework or discovery time is not meaningful once the
+        # files overlap. The per-phase breakdown is still available on each container, because
+        # parallelism is file-level. (#2794)
+        $TestRun.Duration = $RunDuration
+        $TestRun.UserDuration = [TimeSpan]::Zero
+        $TestRun.FrameworkDuration = [TimeSpan]::Zero
+        $TestRun.DiscoveryDuration = [TimeSpan]::Zero
     }
 
     $TestRun.PassedCount = $TestRun.Passed.Count

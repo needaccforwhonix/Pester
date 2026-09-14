@@ -45,8 +45,28 @@ function Should-BeAssertion ($ActualValue, $ExpectedValue, [switch] $Negate, [st
         }
     }
 }
-
 function ShouldBeFailureMessage($ActualValue, $ExpectedValue, $Because) {
+    # Two collections of different lengths can still render the same once single-element
+    # arrays are unrolled (e.g. ',$a | Should -Be $a' wraps the array), which makes the
+    # plain "Expected @(1, 2, 3), but got @(1, 2, 3)." message look nonsensical. Spell out
+    # the lengths instead so the difference is visible. (#1154)
+    $actualIsCollection = $ActualValue -is [System.Collections.IEnumerable] -and $ActualValue -isnot [string]
+    $expectedIsCollection = $ExpectedValue -is [System.Collections.IEnumerable] -and $ExpectedValue -isnot [string]
+
+    if ($actualIsCollection -and $expectedIsCollection) {
+        $actualLength = @($ActualValue).Count
+        $expectedLength = @($ExpectedValue).Count
+
+        if ($actualLength -ne $expectedLength) {
+            return "Expected a collection $(Format-Nicely $ExpectedValue) with length $expectedLength,$(if ($null -ne $Because) { Format-Because $Because }) but got a collection $(Format-Nicely $ActualValue) with length $actualLength."
+        }
+
+        $differenceIndex = Get-CollectionDifferenceIndex -ActualValue @($ActualValue) -ExpectedValue @($ExpectedValue)
+        if ($null -ne $differenceIndex) {
+            return (Get-CompareCollectionMessage -ActualValue @($ActualValue) -ExpectedValue @($ExpectedValue) -DifferenceIndex $differenceIndex -Because $Because) -join "`n"
+        }
+    }
+
     # This looks odd; it's to unroll single-element arrays so the "-is [string]" expression works properly.
     $ActualValue = $($ActualValue)
     $ExpectedValue = $($ExpectedValue)
@@ -63,6 +83,7 @@ function ShouldBeFailureMessage($ActualValue, $ExpectedValue, $Because) {
     #>
     (Get-CompareStringMessage -Expected $ExpectedValue -Actual $ActualValue -Because $Because) -join "`n"
 }
+
 
 function NotShouldBeFailureMessage($ActualValue, $ExpectedValue, $Because) {
     return "Expected $(Format-Nicely $ExpectedValue) to be different from the actual value,$(if ($null -ne $Because) { Format-Because $Because }) but got the same value."
@@ -125,6 +146,21 @@ function Should-BeAssertionExactly($ActualValue, $ExpectedValue, $Because) {
 }
 
 function ShouldBeExactlyFailureMessage($ActualValue, $ExpectedValue, $Because) {
+    $actualIsCollection = $ActualValue -is [System.Collections.IEnumerable] -and $ActualValue -isnot [string]
+    $expectedIsCollection = $ExpectedValue -is [System.Collections.IEnumerable] -and $ExpectedValue -isnot [string]
+
+    if ($actualIsCollection -and $expectedIsCollection) {
+        $actualLength = @($ActualValue).Count
+        $expectedLength = @($ExpectedValue).Count
+
+        if ($actualLength -eq $expectedLength) {
+            $differenceIndex = Get-CollectionDifferenceIndex -ActualValue @($ActualValue) -ExpectedValue @($ExpectedValue) -CaseSensitive
+            if ($null -ne $differenceIndex) {
+                return (Get-CompareCollectionMessage -ActualValue @($ActualValue) -ExpectedValue @($ExpectedValue) -DifferenceIndex $differenceIndex -Because $Because) -join "`n"
+            }
+        }
+    }
+
     # This looks odd; it's to unroll single-element arrays so the "-is [string]" expression works properly.
     $ActualValue = $($ActualValue)
     $ExpectedValue = $($ExpectedValue)
@@ -207,33 +243,17 @@ function Get-CompareStringMessage {
             "Strings differ at index $differenceIndex."
         }
 
-        # find the difference in the string with expanded characters, this is the fastest and most foolproof way of
-        # getting the updated difference index. we could also inspect the new string and try to find every occurrence
-        # of special character before the difference index, but '\n' is valid piece of string
-        # or inspect the original string, but then we need to make sure that we look for all the special characters.
-        # instead we just compare it again.
-
         $actualExpanded = Expand-SpecialCharacters -InputObject $actual
         $expectedExpanded = Expand-SpecialCharacters -InputObject $ExpectedValue
-        $maxLength = if ($expectedExpanded.Length -gt $actualExpanded.Length) { $expectedExpanded.Length } else { $actualExpanded.Length }
-        $differenceIndex = $null
-        for ($i = 0; $i -lt $maxLength -and ($null -eq $differenceIndex); ++$i) {
-            $differenceIndex = if ($CaseSensitive -and ($expectedExpanded[$i] -cne $actualExpanded[$i])) {
-                $i
-            }
-            elseif ($expectedExpanded[$i] -ne $actualExpanded[$i]) {
-                $i
-            }
-        }
 
         $ellipsis = "..."
-        # we will sorround the output with Expected: '' and But was: '', from which the Expected: '' is longer
+        # we will surround the output with Expected: '' and But was: '', from which the Expected: '' is longer
         # so subtract that from the maximum line length, to get how much of the line we actually have available
-        $sorroundLength = "Expected: ''".Length
+        $surroundLength = "Expected: ''".Length
         # the deeper we are in the test structure the less space we have on screen because we are adding margin
         # before the output each describe level adds one space + 3 spaces for the test output margin
         $sideOffset = @((Get-CurrentTest).Path).Length + 3
-        $availableLineLength = $maximumLineLength - $sorroundLength - $sideOffset
+        $availableLineLength = $maximumLineLength - $surroundLength - $sideOffset
 
         $expectedExcerpt = Format-AsExcerpt -InputObject $expectedExpanded -DifferenceIndex $differenceIndex -LineLength $availableLineLength -ExcerptMarker $ellipsis -ContextLength $ContextLength
 
@@ -241,8 +261,51 @@ function Get-CompareStringMessage {
 
         "Expected: '{0}'" -f $expectedExcerpt.Line
         "But was:  '{0}'" -f $actualExcerpt.Line
-        " " * ($sorroundLength - 1) + '-' * $actualExcerpt.DifferenceIndex + '^'
+        " " * ($surroundLength - 1) + '-' * $actualExcerpt.DifferenceIndex + '^'
     }
+}
+
+function Get-CollectionDifferenceIndex {
+    param(
+        [object[]] $ActualValue,
+        [object[]] $ExpectedValue,
+        [switch] $CaseSensitive
+    )
+
+    for ($i = 0; $i -lt $ExpectedValue.Count; $i++) {
+        if ((IsArray $ActualValue[$i]) -or (IsArray $ExpectedValue[$i])) {
+            if (-not (ArraysAreEqual -First $ActualValue[$i] -Second $ExpectedValue[$i] -CaseSensitive:$CaseSensitive)) {
+                return $i
+            }
+        }
+        else {
+            if ($CaseSensitive) {
+                $comparer = { param($Actual, $Expected) $Expected -ceq $Actual }
+            }
+            else {
+                $comparer = { param($Actual, $Expected) $Expected -eq $Actual }
+            }
+
+            if (-not (& $comparer $ActualValue[$i] $ExpectedValue[$i])) {
+                return $i
+            }
+        }
+    }
+}
+
+function Get-CompareCollectionMessage {
+    param(
+        [object[]] $ExpectedValue,
+        [object[]] $ActualValue,
+        [int] $DifferenceIndex,
+        $Because
+    )
+
+    "Expected collections to be the same,$(if ($null -ne $Because) { Format-Because $Because }) but they were different."
+    "Collection lengths are both $($ExpectedValue.Count)."
+    "Collections differ at index $DifferenceIndex."
+    "Expected: $(Format-Nicely $ExpectedValue)"
+    "But was:  $(Format-Nicely $ActualValue)"
 }
 
 function Format-AsExcerpt {
@@ -312,14 +375,14 @@ function Expand-SpecialCharacters {
         [AllowEmptyString()]
         [string[]]$InputObject)
     process {
-        $InputObject -replace "`n", "\n" -replace "`r", "\r" -replace "`t", "\t" -replace "`0", "\0" -replace "`b", "\b"
+        [Pester.Formatter]::EscapeControlChars($InputObject)
     }
 }
 
 function ArraysAreEqual {
     param (
-        [object[]] $First,
-        [object[]] $Second,
+        [object] $First,
+        [object] $Second,
         [switch] $CaseSensitive,
         [int] $RecursionDepth = 0,
         [int] $RecursionLimit = 100
@@ -329,6 +392,14 @@ function ArraysAreEqual {
     if ($RecursionDepth -gt $RecursionLimit) {
         throw "Reached the recursion depth limit of $RecursionLimit when comparing arrays $First and $Second. Is one of your arrays cyclic?"
     }
+
+    # Enumerate the inputs ourselves with @(). PowerShell's [object[]] parameter binding wraps a non-IList
+    # enumerable - such as the collection returned by [hashtable].Keys/.Values - into a single element instead
+    # of enumerating it, which made Should -Be report two equal collections as different (#1200). @() uses the
+    # same enumeration the pipeline does (LanguagePrimitives.GetEnumerator), so it expands those collections
+    # while leaving strings, hashtables, scriptblocks and scalars as single values.
+    $First = @($First)
+    $Second = @($Second)
 
     # Do not remove the subexpression @() operators in the following two lines; doing so can cause a
     # silly error in PowerShell v3.  (Null Reference exception from the PowerShell engine in a

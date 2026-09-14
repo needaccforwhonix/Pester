@@ -1,14 +1,3 @@
-﻿function Get-FailureMessage($assertionEntry, $negate, $value, $expected) {
-    if ($negate) {
-        $failureMessageFunction = $assertionEntry.GetNegativeFailureMessage
-    }
-    else {
-        $failureMessageFunction = $assertionEntry.GetPositiveFailureMessage
-    }
-
-    return (& $failureMessageFunction $value $expected)
-}
-
 function Should {
     <#
     .SYNOPSIS
@@ -182,7 +171,17 @@ function Should {
             Invoke-Assertion @assertionParams -ValueToTest $null
         }
         elseif ($entry.SupportsArrayInput) {
-            Invoke-Assertion @assertionParams -ValueToTest $inputArray.ToArray()
+            if ($MyInvocation.ExpectingInput) {
+                # Pipeline input is collected item-by-item in the process block, so pass the collected array.
+                Invoke-Assertion @assertionParams -ValueToTest $inputArray.ToArray()
+            }
+            else {
+                # The value was supplied by parameter instead (Should -ActualValue @(1,2,3), which is also what
+                # splatting does). The process block ran once and $inputArray wrapped the whole value into a
+                # single element; enumerate the original $ActualValue with @() so it matches what the pipeline
+                # would have produced, rather than being wrapped one level too deep. (#2314)
+                Invoke-Assertion @assertionParams -ValueToTest @($ActualValue)
+            }
         }
         else {
             foreach ($object in $inputArray) {
@@ -247,9 +246,55 @@ function Test-AssertionResult {
     )
 
     if (-not $TestResult.Succeeded) {
-        $errorRecord = [Pester.Factory]::CreateShouldErrorRecord($TestResult.FailureMessage, $file, $lineNumber, $lineText, $shouldThrow, $TestResult)
+        $currentFile = $file
+        $currentLineNumber = $lineNumber
+        $currentLineText = $lineText
+        $currentShouldThrow = $ShouldThrow
+        $currentAddErrorCallback = $AddErrorCallback
 
-        if ($null -eq $AddErrorCallback -or $ShouldThrow) {
+        if ($null -eq $currentFile -and $null -ne $PSCmdlet) {
+            $pesterRuntimeInvocationContext = $PSCmdlet.SessionState.PSVariable.GetValue('______parameters')
+            $isInsidePesterRuntime = $null -ne $pesterRuntimeInvocationContext
+
+            $errorActionIsDefined = $PSCmdlet.MyInvocation.BoundParameters.ContainsKey('ErrorAction')
+            if ($errorActionIsDefined) {
+                $currentShouldThrow = 'Stop' -eq $PSCmdlet.MyInvocation.BoundParameters['ErrorAction']
+            }
+
+            if ($null -eq $currentShouldThrow -or -not $currentShouldThrow) {
+                if (-not $isInsidePesterRuntime) {
+                    $currentShouldThrow = $true
+                }
+                else {
+                    if ($null -eq $currentShouldThrow) {
+                        if ($null -ne $PSCmdlet.SessionState.PSVariable.GetValue('______isInMockParameterFilter')) {
+                            $currentShouldThrow = $true
+                        }
+                        else {
+                            $currentShouldThrow = 'Stop' -eq $pesterRuntimeInvocationContext.Configuration.Should.ErrorAction.Value
+                        }
+                    }
+
+                    if (-not $currentShouldThrow) {
+                        $currentAddErrorCallback = {
+                            param($err)
+                            $null = $pesterRuntimeInvocationContext.ErrorRecord.Add($err)
+                        }
+                    }
+                }
+            }
+
+            $currentFile = $PSCmdlet.MyInvocation.ScriptName
+            $currentLineNumber = $PSCmdlet.MyInvocation.ScriptLineNumber
+            $currentLineText = $PSCmdlet.MyInvocation.Line
+            if ($null -ne $currentLineText) {
+                $currentLineText = $currentLineText.TrimEnd([System.Environment]::NewLine)
+            }
+        }
+
+        $errorRecord = [Pester.Factory]::CreateShouldErrorRecord($TestResult.FailureMessage, $currentFile, $currentLineNumber, $currentLineText, $currentShouldThrow, $TestResult)
+
+        if ($null -eq $currentAddErrorCallback -or $currentShouldThrow) {
             # throw this error to fail the test immediately
             throw $errorRecord
         }
@@ -265,7 +310,7 @@ function Test-AssertionResult {
         }
 
         # collect the error via the provided callback
-        & $AddErrorCallback $err
+        & $currentAddErrorCallback $err
     }
     else {
         #extract data to return if there are any on the object

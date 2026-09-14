@@ -186,6 +186,99 @@ i -PassThru:$PassThru {
         }
     }
 
+    b 'Output for container test count in Normal mode' {
+        t 'Passing container line shows the total test count' {
+            $sb = {
+                $PesterPreference = [PesterConfiguration]::Default
+                $PesterPreference.Output.Verbosity = 'Normal'
+                $PesterPreference.Output.CIFormat = 'None'
+                $PesterPreference.Output.RenderMode = 'Plaintext'
+
+                $container = New-PesterContainer -ScriptBlock {
+                    Describe 'd1' {
+                        It 'i1' {
+                            1 | Should -Be 1
+                        }
+
+                        It 'i2' {
+                            1 | Should -Be 1
+                        }
+
+                        It 'i3' {
+                            1 | Should -Be 1
+                        }
+                    }
+                }
+                Invoke-Pester -Container $container
+            }
+
+            $output = Invoke-InNewProcess $sb
+            # only print the relevant part of output
+            $null, $run = $output -join "`n" -split 'Running tests.'
+            $run | Write-Host
+
+            $passingLine = $output | Select-String -Pattern '^\[\+\].*\(3 tests\)\s*$'
+            @($passingLine).Count | Verify-Equal 1
+        }
+
+        t 'Passing container line uses singular test for a single test' {
+            $sb = {
+                $PesterPreference = [PesterConfiguration]::Default
+                $PesterPreference.Output.Verbosity = 'Normal'
+                $PesterPreference.Output.CIFormat = 'None'
+                $PesterPreference.Output.RenderMode = 'Plaintext'
+
+                $container = New-PesterContainer -ScriptBlock {
+                    Describe 'd1' {
+                        It 'i1' {
+                            1 | Should -Be 1
+                        }
+                    }
+                }
+                Invoke-Pester -Container $container
+            }
+
+            $output = Invoke-InNewProcess $sb
+            # only print the relevant part of output
+            $null, $run = $output -join "`n" -split 'Running tests.'
+            $run | Write-Host
+
+            $passingLine = $output | Select-String -Pattern '^\[\+\].*\(1 test\)\s*$'
+            @($passingLine).Count | Verify-Equal 1
+        }
+
+        t 'Detailed mode passing test lines do not include the container test count' {
+            $sb = {
+                $PesterPreference = [PesterConfiguration]::Default
+                $PesterPreference.Output.Verbosity = 'Detailed'
+                $PesterPreference.Output.CIFormat = 'None'
+                $PesterPreference.Output.RenderMode = 'Plaintext'
+
+                $container = New-PesterContainer -ScriptBlock {
+                    Describe 'd1' {
+                        It 'i1' {
+                            1 | Should -Be 1
+                        }
+
+                        It 'i2' {
+                            1 | Should -Be 1
+                        }
+                    }
+                }
+                Invoke-Pester -Container $container
+            }
+
+            $output = Invoke-InNewProcess $sb
+            # only print the relevant part of output
+            $null, $run = $output -join "`n" -split 'Running tests.'
+            $run | Write-Host
+
+            # Detailed shows per-test [+] lines, none of them should carry the "(N tests)" suffix
+            $countSuffix = $output | Select-String -Pattern '\(\d+ tests?\)\s*$'
+            @($countSuffix).Count | Verify-Equal 0
+        }
+    }
+
     b 'Output for container names' {
         t 'Script Block container names are output' {
             $sb = {
@@ -256,6 +349,7 @@ i -PassThru:$PassThru {
                 $PesterPreference = [PesterConfiguration]::Default
                 $PesterPreference.Output.Verbosity = 'Detailed'
                 $PesterPreference.Output.RenderMode = 'ConsoleColor'
+                $PesterPreference.Output.CIFormat = 'None'
 
                 $container = New-PesterContainer -ScriptBlock {
                     BeforeAll {
@@ -392,6 +486,53 @@ i -PassThru:$PassThru {
             $writehostOutput = $output[0..4] -join "`n"
             $normalOutput = $output[5..9] -join "`n"
             $normalOutput | Verify-Equal $writehostOutput
+        }
+    }
+
+    b "Code Coverage output" {
+        t "Paths are relative to report root option when set" {
+            $sb = [ScriptBlock]::Create(('
+                $c = New-PesterConfiguration
+                $c.Run.Path = "tst/testProjectsForMissingCoverage/CoverageTestFile.Missing.Tests.ps1"
+                $c.Run.PassThru = $true
+                $c.CodeCoverage.Enabled = $true
+                $c.CodeCoverage.ExcludeTests = $true # default
+                $c.Output.Verbosity = "Detailed"
+                $c.Output.RenderMode = "Plaintext"
+
+                $c.CodeCoverage.ReportRoot = "#currentDir#/testProjectsForMissingCoverage"
+
+                $null = Invoke-Pester -Configuration $c
+            ' -replace '#currentDir#', $PSScriptRoot))
+
+            $output = Invoke-InNewProcess $sb
+            $output | Write-Host
+
+            $uncoveredLine = $output | where { $_ -like "*not covered*" }
+
+            $uncoveredLine | Verify-Like 'CoverageTestFile.Missing.ps1*not covered*'
+        }
+
+        t "Paths are relative to repo root option when report root is not set" {
+            $sb = {
+                $c = New-PesterConfiguration
+                $c.Run.Path = "tst/testProjectsForMissingCoverage/CoverageTestFile.Missing.Tests.ps1"
+                $c.Run.PassThru = $true
+                $c.CodeCoverage.Enabled = $true
+                $c.CodeCoverage.ExcludeTests = $true # default
+                $c.CodeCoverage.Path = "tst/testProjectsForMissingCoverage/CoverageTestFile.Missing.ps1"
+                $c.Output.Verbosity = 'Detailed'
+                $c.Output.RenderMode = 'Plaintext'
+
+                $null = Invoke-Pester -Configuration $c
+            }
+
+            $output = Invoke-InNewProcess $sb
+            $output | Write-Host
+
+            $uncoveredLine = $output | where { $_ -like "*not covered*" }
+
+            $uncoveredLine | Verify-Like ('tst/testProjectsForMissingCoverage/CoverageTestFile.Missing.ps1*not covered*' -replace '/', [System.IO.Path]::DirectorySeparatorChar)
         }
     }
 }

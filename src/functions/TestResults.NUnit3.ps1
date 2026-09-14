@@ -27,18 +27,22 @@ function Write-NUnit3TestRunAttributes {
     $XmlWriter.WriteAttributeString('id', '0')
     $XmlWriter.WriteAttributeString('name', $Result.Configuration.TestResult.TestSuiteName.Value) # required attr. in schema, but not in docs or nunit-console output...
     $XmlWriter.WriteAttributeString('fullname', $Result.Configuration.TestResult.TestSuiteName.Value) # required attr. in schema, but not in docs or nunit-console output...
-    $XmlWriter.WriteAttributeString('testcasecount', ($Result.TotalCount - $Result.NotRunCount)) # all testcases in run (before filtering). would've been totalcount if we listed shouldrun=false
+    # Containers that failed during discovery have no tests, so count each as one failed item
+    # and the run totals do not report zero. (#2664)
+    $discoveryFailedCount = Get-DiscoveryFailedContainerCount -Result $Result
+    $testcasecount = ($Result.TotalCount - $Result.NotRunCount) + $discoveryFailedCount
+    $XmlWriter.WriteAttributeString('testcasecount', $testcasecount) # all testcases in run (before filtering). would've been totalcount if we listed shouldrun=false
     $XmlWriter.WriteAttributeString('result', (Get-NUnit3Result $Result)) # Summary of run. May be Passed, Failed, Inconclusive or Skipped.
-    $XmlWriter.WriteAttributeString('total', ($Result.TotalCount - $Result.NotRunCount)) # testcasecount - filtered
+    $XmlWriter.WriteAttributeString('total', $testcasecount) # testcasecount - filtered
     $XmlWriter.WriteAttributeString('passed', $Result.PassedCount)
-    $XmlWriter.WriteAttributeString('failed', $Result.FailedCount)
+    $XmlWriter.WriteAttributeString('failed', ($Result.FailedCount + $discoveryFailedCount))
     $XmlWriter.WriteAttributeString('inconclusive', $Result.InconclusiveCount)
     $XmlWriter.WriteAttributeString('skipped', $Result.SkippedCount)
     $XmlWriter.WriteAttributeString('warnings', '0') # required attr.
     $XmlWriter.WriteAttributeString('start-time', (Get-UTCTimeString $Result.ExecutedAt))
     $XmlWriter.WriteAttributeString('end-time', (Get-UTCTimeString ($Result.ExecutedAt + $Result.Duration)))
     $XmlWriter.WriteAttributeString('duration', (Convert-TimeSpan $Result.Duration))
-    $XmlWriter.WriteAttributeString('asserts', ($Result.TotalCount - $Result.NotRunCount)) # required attr. assuming 1:1 per testcase
+    $XmlWriter.WriteAttributeString('asserts', $testcasecount) # required attr. assuming 1:1 per testcase
     $XmlWriter.WriteAttributeString('random-seed', (Get-Random)) # required attr. in schema, but not in docs or nunit-console output...
 }
 
@@ -54,12 +58,13 @@ function Write-NUnit3TestRunChildNode {
     $RuntimeEnvironment = Get-RunTimeEnvironment
 
     foreach ($container in $Result.Containers) {
-        if (-not $container.ShouldRun) {
-            # skip containers that were discovered but none of their tests run
+        if ((-not $container.ShouldRun) -and -not (Test-ContainerFailedDiscovery -Container $container)) {
+            # skip containers that were discovered but none of their tests run,
+            # unless they failed during discovery so the error is still reported (#2664)
             continue
         }
 
-        # Incremenet assembly-id per container and reset node-counter
+        # Increment assembly-id per container and reset node-counter
         $reportIds.Assembly++
         $reportIds.Node = 1000
         Write-NUnit3TestSuiteElement -XmlWriter $XmlWriter -Node $container -RuntimeEnvironment $RuntimeEnvironment
@@ -107,6 +112,12 @@ function Write-NUnit3TestSuiteElement {
         $CurrentPath = $null # child suites shouldn't use assembly-name in path
         Write-NUnit3TestSuiteAttributes -TestSuiteInfo $suiteInfo -XmlWriter $XmlWriter
         Write-NUnit3EnvironmentInformation -XmlWriter $XmlWriter -Environment $RuntimeEnvironment
+
+        if (Test-ContainerFailedDiscovery -Container $Node) {
+            # The container failed during discovery and has no tests to carry the error,
+            # so surface the discovery error on the suite itself. (#2664)
+            Write-NUnit3FailureElement -TestResult $Node -XmlWriter $XmlWriter
+        }
     }
     else {
         $CurrentPath = $suiteInfo.fullname
@@ -260,7 +271,7 @@ function Get-NUnit3TestSuiteInfo {
         'Ignored'
     }
     elseif ($TestSuite -isnot [Pester.Run] -and (-not $TestSuite.ShouldRun) -and $TestSuite.Result -eq 'Failed') {
-        # Discovery failed - not runnable code
+        # Discovery failed, so the code is not runnable
         'NotRunnable'
     }
     else {
@@ -273,6 +284,12 @@ function Get-NUnit3TestSuiteInfo {
         Get-NUnit3Site
     }
 
+    # A container that failed during discovery has no tests, so count it as one failed item
+    # and the suite totals do not report zero. (#2664)
+    $isDiscoveryFailure = $TestSuite -is [Pester.Container] -and (Test-ContainerFailedDiscovery -Container $TestSuite)
+    $testcasecount = if ($isDiscoveryFailure) { 1 } else { ($TestSuite.TotalCount - $TestSuite.NotRunCount) }
+    $failedCount = if ($isDiscoveryFailure) { 1 } else { $TestSuite.FailedCount }
+
     $suiteInfo = @{
         type          = $SuiteType
         name          = $name
@@ -283,10 +300,10 @@ function Get-NUnit3TestSuiteInfo {
         start         = (Get-UTCTimeString $TestSuite.ExecutedAt)
         end           = (Get-UTCTimeString ($TestSuite.ExecutedAt + $TestSuite.Duration))
         duration      = (Convert-TimeSpan $TestSuite.Duration)
-        testcasecount = ($TestSuite.TotalCount - $TestSuite.NotRunCount) # would've been totalcount if we listed shouldrun=false
-        total         = ($TestSuite.TotalCount - $TestSuite.NotRunCount)
+        testcasecount = $testcasecount # would've been totalcount if we listed shouldrun=false
+        total         = $testcasecount
         passed        = $TestSuite.PassedCount
-        failed        = $TestSuite.FailedCount
+        failed        = $failedCount
         skipped       = $TestSuite.SkippedCount
         inconclusive  = $TestSuite.InconclusiveCount
         site          = $site
@@ -326,12 +343,14 @@ function Write-NUnit3TestSuiteAttributes {
 }
 
 function Get-NUnit3Result ($InputObject) {
-    if ($InputObject.TotalCount -eq $InputObject.NotRunCount) {
-        'Inconclusive'
-    }
-    # also checking result to cover setup/teardown errors
-    elseif ($InputObject.Result -eq 'Failed' -or $InputObject.FailedCount -gt 0) {
+    # A discovery failure has no tests (TotalCount -eq NotRunCount), so check the failed state
+    # first, otherwise it would be reported as Inconclusive. (#2664)
+    if ($InputObject.Result -eq 'Failed' -or $InputObject.FailedCount -gt 0) {
+        # also checking result to cover setup/teardown and discovery errors
         'Failed'
+    }
+    elseif ($InputObject.TotalCount -eq $InputObject.NotRunCount) {
+        'Inconclusive'
     }
     elseif ($InputObject.SkippedCount -gt 0) {
         'Skipped'
@@ -554,7 +573,12 @@ function Format-CDataString ($Output) {
     $linesCount = $out.Length
     $o = for ($i = 0; $i -lt $linesCount; $i++) {
         # The input is array of objects, convert them to strings.
-        $line = if ($null -eq $out[$i]) { [String]::Empty } else { $out[$i].ToString() }
+        $line = if ($null -eq $out[$i]) {
+            [String]::Empty
+        }
+        else {
+            try { $out[$i].ToString() } catch { "<Output object ToString() failed: $($_.Exception.Message)>" }
+        }
 
         if (0 -gt $line.IndexOfAny($script:invalidCDataChars)) {
             # No special chars that need replacing.
@@ -652,7 +676,7 @@ function Write-NUnit3DataProperty ([System.Collections.IDictionary] $Data, [Syst
 }
 
 function Get-NUnit3NodeId {
-    # depends on inhertied $reportIds created in Write-NUnit3TestRunChildNode
+    # depends on inherited $reportIds created in Write-NUnit3TestRunChildNode
     if ($null -eq $reportIds) { return '' }
 
     # Unique id (string):  <asemmblyid>-<counter>

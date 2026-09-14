@@ -28,7 +28,7 @@
     # not actual breakpoints
     $breakpoints = @(Get-CoverageBreakpoints -CoverageInfo $coverageInfo -Logger $Logger)
     if ($null -ne $logger) {
-        & $logger "Figuring out $($breakpoints.Count) measurable code locations took $($sw.ElapsedMilliseconds) ms."
+        & $logger "Figuring out $($breakpoints.Count) measurable code locations took $($sw.ElapsedMilliseconds)ms."
     }
 
     if ($UseBreakpoints) {
@@ -76,7 +76,7 @@
         $sw.Stop()
 
         if ($null -ne $logger) {
-            & $logger "Setting $($breakpoints.Count) breakpoints took $($sw.ElapsedMilliseconds) ms."
+            & $logger "Setting $($breakpoints.Count) breakpoints took $($sw.ElapsedMilliseconds)ms."
         }
     }
     else {
@@ -110,7 +110,7 @@ function Exit-CoverageAnalysis {
     }
 
     if ($null -ne $logger) {
-        & $logger "Removing $($breakpoints.Count) breakpoints took $($sw.ElapsedMilliseconds) ms."
+        & $logger "Removing $($breakpoints.Count) breakpoints took $($sw.ElapsedMilliseconds)ms."
     }
 }
 
@@ -233,10 +233,10 @@ function Get-CodeCoverageFilePaths {
     $testsPattern = "*$($PesterPreference.Run.TestExtension.Value)"
 
     [string[]] $filteredFiles = @(foreach ($file in (& $SafeCommands['Get-ChildItem'] -LiteralPath $Paths -File -Recurse:$RecursePaths)) {
-        if (('.ps1', '.psm1') -contains $file.Extension -and ($IncludeTests -or $file.Name -notlike $testsPattern)) {
-            $file.FullName
-        }
-    })
+            if (('.ps1', '.psm1') -contains $file.Extension -and ($IncludeTests -or $file.Name -notlike $testsPattern)) {
+                $file.FullName
+            }
+        })
 
     $uniqueFiles = [System.Collections.Generic.HashSet[string]]::new($filteredFiles)
     return $uniqueFiles
@@ -272,7 +272,7 @@ function Get-CoverageBreakpoints {
             }
         }
         if ($null -ne $Logger) {
-            & $Logger  "Analyzing $analyzedCommands of $totalCommands commands in file '$($fileGroup.Name)' for code coverage, in $($sw.ElapsedMilliseconds) ms"
+            & $Logger  "Analyzing $analyzedCommands of $totalCommands commands in file '$($fileGroup.Name)' for code coverage, in $($sw.ElapsedMilliseconds)ms"
         }
     }
 }
@@ -307,8 +307,7 @@ function Test-CommandInScope {
     $classResult = !$Class
     $functionResult = !$Function
     for ($ast = $Command; $null -ne $ast; $ast = $ast.Parent) {
-        if (!$classResult -and $PSVersionTable.PSVersion.Major -ge 5) {
-            # Classes have been introduced in PowerShell 5.0
+        if (!$classResult) {
             $classAst = $ast -as [System.Management.Automation.Language.TypeDefinitionAst]
             if ($null -ne $classAst -and $classAst.Name -like $Class) {
                 $classResult = $true
@@ -412,23 +411,21 @@ function IsIgnoredCommand {
         return $true
     }
 
-    if ($PSVersionTable.PSVersion.Major -ge 4) {
-        if ($Command.Extent.Text -eq 'Configuration') {
-            # More DSC voodoo.  Calls to "configuration" generate breakpoints, but their HitCount
-            # stays zero (even though they are executed.)  For now, ignore them, unless we can come
-            # up with a better solution.
-            return $true
-        }
-
-        if (IsChildOfHashtableDynamicKeyword -Command $Command) {
-            # The lines inside DSC resource declarations don't trigger their breakpoints when executed,
-            # just like the "configuration" keyword itself.  I don't know why, at this point, but just like
-            # configuration, we'll ignore it so it doesn't clutter up the coverage analysis with useless junk.
-            return $true
-        }
+    if ($Command.Extent.Text -eq 'Configuration') {
+        # More DSC voodoo.  Calls to "configuration" generate breakpoints, but their HitCount
+        # stays zero (even though they are executed.)  For now, ignore them, unless we can come
+        # up with a better solution.
+        return $true
     }
 
-    if ($Command.Extent.Text -match '^{?& \$wrappedCmd @PSBoundParameters ?}?$' -and
+    if (IsChildOfHashtableDynamicKeyword -Command $Command) {
+        # The lines inside DSC resource declarations don't trigger their breakpoints when executed,
+        # just like the "configuration" keyword itself.  I don't know why, at this point, but just like
+        # configuration, we'll ignore it so it doesn't clutter up the coverage analysis with useless junk.
+        return $true
+    }
+
+    if ($Command.Extent.Text -match '^{? ?& \$wrappedCmd @PSBoundParameters ?}?$' -and
         (Get-AstTopParent -Ast $Command) -like '*$steppablePipeline.Begin($PSCmdlet)*$steppablePipeline.Process($_)*$steppablePipeline.End()*' ) {
         # Fix for proxy function wrapped pipeline command. PowerShell does not increment the hit count when
         # these functions are executed using the steppable pipeline; further, these checks are redundant, as
@@ -443,12 +440,10 @@ function IsIgnoredCommand {
         return $true
     }
 
-    if ($PSVersionTable.PSVersion.Major -ge 5) {
-        if ($Command -is [System.Management.Automation.Language.CommandExpressionAst] -and
-            $Command.Expression[0] -is [System.Management.Automation.Language.BaseCtorInvokeMemberExpressionAst]) {
-            # Calls to inherited "base(...)" constructor does not trigger breakpoint or tracer hit, ignore.
-            return $true
-        }
+    if ($Command -is [System.Management.Automation.Language.CommandExpressionAst] -and
+        $Command.Expression[0] -is [System.Management.Automation.Language.BaseCtorInvokeMemberExpressionAst]) {
+        # Calls to inherited "base(...)" constructor does not trigger breakpoint or tracer hit, ignore.
+        return $true
     }
 
     return $false
@@ -458,21 +453,9 @@ function IsChildOfHashtableDynamicKeyword {
     param ([System.Management.Automation.Language.Ast] $Command)
 
     for ($ast = $Command.Parent; $null -ne $ast; $ast = $ast.Parent) {
-        if ($PSVersionTable.PSVersion.Major -ge 5) {
-            # The ast behaves differently for DSC resources with version 5+.  There's a new DynamicKeywordStatementAst class,
-            # and they no longer are represented by CommandAst objects.
-
-            if ($ast -is [System.Management.Automation.Language.DynamicKeywordStatementAst] -and
-                $ast.CommandElements[-1] -is [System.Management.Automation.Language.HashtableAst]) {
-                return $true
-            }
-        }
-        else {
-            if ($ast -is [System.Management.Automation.Language.CommandAst] -and
-                $null -ne $ast.DefiningKeyword -and
-                $ast.DefiningKeyword.BodyMode -eq [System.Management.Automation.Language.DynamicKeywordBodyMode]::Hashtable) {
-                return $true
-            }
+        if ($ast -is [System.Management.Automation.Language.DynamicKeywordStatementAst] -and
+            $ast.CommandElements[-1] -is [System.Management.Automation.Language.HashtableAst]) {
+            return $true
         }
     }
 
@@ -500,14 +483,10 @@ function IsClosingLoopCondition {
 function Get-ParentClassName {
     param ([System.Management.Automation.Language.Ast] $Ast)
 
-    if ($PSVersionTable.PSVersion.Major -ge 5) {
-        # Classes have been introduced in PowerShell 5.0
+    $parent = $Ast.Parent
 
-        $parent = $Ast.Parent
-
-        while ($null -ne $parent -and $parent -isnot [System.Management.Automation.Language.TypeDefinitionAst]) {
-            $parent = $parent.Parent
-        }
+    while ($null -ne $parent -and $parent -isnot [System.Management.Automation.Language.TypeDefinitionAst]) {
+        $parent = $parent.Parent
     }
 
     if ($null -eq $parent) {
@@ -603,51 +582,78 @@ function Get-CoverageHitCommands {
     $CommandCoverage | & $SafeCommands['Where-Object'] { $_.Breakpoint.HitCount -gt 0 }
 }
 
-function Merge-CommandCoverage {
+function Merge-CoverageFromParallel {
+    <#
+    .SYNOPSIS
+    Merges the per-worker breakpoint coverage of a parallel run into a single CommandCoverage list.
+
+    .DESCRIPTION
+    EXPERIMENTAL. In a parallel run each file measures the same set of measurable locations
+    (CodeCoverage.Path is identical for every worker), so every worker returns a full projection of
+    those locations with its own per-location HitCount (see Invoke-TestInParallel). A location is
+    covered when at least one file hit it, so this collapses the projections by
+    "File:StartLine:StartColumn" and sums the HitCounts, keeping the first occurrence's discovery
+    order. Each merged entry is shaped like a breakpoint-based CommandCoverage item (a Breakpoint
+    with a HitCount) so Get-CoverageReport / Get-JaCoCoReportXml / Get-CoberturaReportXml consume it
+    unchanged.
+    #>
+    [CmdletBinding()]
     param ([object[]] $CommandCoverage)
 
-    # todo: this is a quick implementation of merging lists of breakpoints together, this is needed
-    # because the code coverage is stored per container and so in the end a lot of commands are missed
-    # in the container while they are hit in other, what we want is to know how many of the commands were
-    # hit in at least one file. This simple implementation does not add together the number of hits on each breakpoint
-    # so the HitCommands is not accurate, it only keeps the first breakpoint that points to that command and it's hit count
-    # this should be improved in the future.
-
-    # todo: move this implementation to the calling function so we don't need to split and merge the collection twice and we
-    # can also accumulate the hit count across the different breakpoints
-
-    $hitBps = @{}
-    $hits = [System.Collections.Generic.List[object]]@()
-    foreach ($bp in $CommandCoverage) {
-        if (0 -lt $bp.Breakpoint.HitCount) {
-            $key = "$($bp.File):$($bp.StartLine):$($bp.StartColumn)"
-            if (-not $hitBps.ContainsKey($key)) {
-                # adding to a hashtable to make sure we can look up the keys quickly
-                # and also to an array list to make sure we can later dump them in the correct order
-                $hitBps.Add($key, $bp)
-                $null = $hits.Add($bp)
+    $merged = [System.Collections.Specialized.OrderedDictionary]::new()
+    foreach ($cc in $CommandCoverage) {
+        if ($null -eq $cc) { continue }
+        $key = "$($cc.File):$($cc.StartLine):$($cc.StartColumn)"
+        if ($merged.Contains($key)) {
+            $merged[$key].Breakpoint.HitCount += [int] $cc.HitCount
+        }
+        else {
+            $merged[$key] = [PSCustomObject] @{
+                File        = $cc.File
+                Class       = $cc.Class
+                Function    = $cc.Function
+                StartLine   = $cc.StartLine
+                EndLine     = $cc.EndLine
+                StartColumn = $cc.StartColumn
+                EndColumn   = $cc.EndColumn
+                Command     = $cc.Command
+                Breakpoint  = @{ HitCount = [int] $cc.HitCount }
             }
         }
     }
 
-    $missedBps = @{}
-    $misses = [System.Collections.Generic.List[object]]@()
-    foreach ($bp in $CommandCoverage) {
-        if (0 -eq $bp.Breakpoint.HitCount) {
-            $key = "$($bp.File):$($bp.StartLine):$($bp.StartColumn)"
-            if (-not $hitBps.ContainsKey($key)) {
-                if (-not $missedBps.ContainsKey($key)) {
-                    $missedBps.Add($key, $bp)
-                    $null = $misses.Add($bp)
-                }
-            }
+    @($merged.Values)
+}
+
+function Convert-CommandCoverageToProjection {
+    <#
+    .SYNOPSIS
+    Projects raw CommandCoverage breakpoint objects into the lightweight, HitCount-carrying shape
+    that Merge-CoverageFromParallel expects.
+
+    .DESCRIPTION
+    EXPERIMENTAL. Drops the heavy Ast / live Breakpoint references and flattens the breakpoint hit
+    count onto a HitCount property, so a batch of coverage measured in-process (e.g. the sequential
+    #pester:no-parallel files of a parallel run) can be merged with the projections returned by
+    parallel workers.
+    #>
+    [CmdletBinding()]
+    param ([object[]] $CommandCoverage)
+
+    foreach ($cc in $CommandCoverage) {
+        if ($null -eq $cc) { continue }
+        [PSCustomObject] @{
+            File        = $cc.File
+            Class       = $cc.Class
+            Function    = $cc.Function
+            StartLine   = $cc.StartLine
+            EndLine     = $cc.EndLine
+            StartColumn = $cc.StartColumn
+            EndColumn   = $cc.EndColumn
+            Command     = $cc.Command
+            HitCount    = [int] $cc.Breakpoint.HitCount
         }
     }
-
-    # this is also not very efficient because in the next step we are splitting this collection again
-    # into hit and missed breakpoints
-    $c = $hits.GetEnumerator() + $misses.GetEnumerator()
-    $c
 }
 
 function Get-CoverageReport {
@@ -708,7 +714,6 @@ function Get-CoverageReport {
     $hitCommands = @(Get-CoverageHitCommands -CommandCoverage @($CommandCoverage) | & $SafeCommands['Select-Object'] $properties)
     $analyzedFiles = @(@($CommandCoverage) | & $SafeCommands['Select-Object'] -ExpandProperty File -Unique)
 
-
     [pscustomobject] @{
         NumberOfCommandsAnalyzed = $CommandCoverage.Count
         NumberOfFilesAnalyzed    = $analyzedFiles.Count
@@ -721,70 +726,36 @@ function Get-CoverageReport {
     }
 }
 
-function Get-CommonParentPath {
-    param ([string[]] $Path)
-
-    if ("CoverageGutters" -eq $PesterPreference.CodeCoverage.OutputFormat.Value) {
-        # for coverage gutters the root path is relative to the coverage.xml
-        $fullPath = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($PesterPreference.CodeCoverage.OutputPath.Value)
-        return (& $SafeCommands['Split-Path'] -Path $fullPath | Normalize-Path )
+function Get-ReportRoot {
+    $reportRoot = if ($null -ne $PesterPreference.CodeCoverage.ReportRoot.Value) {
+        $PesterPreference.CodeCoverage.ReportRoot.Value
+    }
+    else {
+        $PesterPreference.Run.RepoRoot.Value
     }
 
-    $pathsToTest = @(
-        $Path |
-            Normalize-Path |
-            & $SafeCommands['Select-Object'] -Unique
-    )
-
-    if ($pathsToTest.Count -gt 0) {
-        $parentPath = & $SafeCommands['Split-Path'] -Path $pathsToTest[0] -Parent
-
-        while ($parentPath.Length -gt 0) {
-            $nonMatches = $pathsToTest -notmatch "^$([regex]::Escape($parentPath))"
-
-            if ($nonMatches.Count -eq 0) {
-                return $parentPath
-            }
-            else {
-                $parentPath = & $SafeCommands['Split-Path'] -Path $parentPath -Parent
-            }
-        }
+    if ([string]::IsNullOrEmpty($reportRoot)) {
+        return $reportRoot
     }
 
-    return [string]::Empty
+    # Resolve to an absolute path. Get-RelativePath strips this prefix off the
+    # (absolute) file paths, so a relative ReportRoot/RepoRoot would never match
+    # and the report would keep the absolute paths instead of making them
+    # relative (#2920). GetUnresolvedProviderPathFromPSPath resolves against the
+    # current location without requiring the path to exist.
+    $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($reportRoot)
 }
 
 function Get-RelativePath {
     param ( [string] $Path, [string] $RelativeTo )
-    return $Path -replace "^$([regex]::Escape("$RelativeTo$([System.IO.Path]::DirectorySeparatorChar)"))?"
-}
-
-function Normalize-Path {
-    [CmdletBinding()]
-    param (
-        [Parameter(ValueFromPipeline = $true, ValueFromPipelineByPropertyName = $true)]
-        [Alias('PSPath', 'FullName')]
-        [string[]] $Path
-    )
-
-    # Split-Path and Join-Path will replace any AltDirectorySeparatorChar instances with the DirectorySeparatorChar
-    # (Even if it's not the one that the split / join happens on.)  So splitting / rejoining a path will give us
-    # consistent separators for later string comparison.
-
-    process {
-        if ($null -ne $Path) {
-            foreach ($p in $Path) {
-                $normalizedPath = & $SafeCommands['Split-Path'] $p -Leaf
-
-                if ($normalizedPath -ne $p) {
-                    $parent = & $SafeCommands['Split-Path'] $p -Parent
-                    $normalizedPath = & $SafeCommands['Join-Path'] $parent $normalizedPath
-                }
-
-                $normalizedPath
-            }
-        }
+    if ([System.IO.Path]::DirectorySeparatorChar -eq '/') {
+        $RelativeTo = $RelativeTo.Replace('\', '/').TrimEnd('/')
     }
+    else {
+        $RelativeTo = $RelativeTo.Replace('/', '\').TrimEnd('\')
+    }
+
+    return $Path -replace "^$([regex]::Escape("$RelativeTo$([System.IO.Path]::DirectorySeparatorChar)"))?"
 }
 
 function Get-JaCoCoReportXml {
@@ -795,10 +766,9 @@ function Get-JaCoCoReportXml {
         [object] $CoverageReport,
         [parameter(Mandatory = $true)]
         [long] $TotalMilliseconds,
-        [string] $Format
+        [parameter(Mandatory = $true)]
+        [string] $ReportRoot
     )
-
-    $isGutters = "CoverageGutters" -eq $Format
 
     if ($null -eq $CoverageReport -or $CoverageReport.NumberOfCommandsAnalyzed -eq 0) {
         return [string]::Empty
@@ -902,9 +872,6 @@ function Get-JaCoCoReportXml {
         $packageList.Add($package)
     }
 
-    $commonParent = Get-CommonParentPath -Path $CoverageReport.AnalyzedFiles
-    $commonParentLeaf = & $SafeCommands["Split-Path"] $commonParent -Leaf
-
     # the JaCoCo xml format without the doctype, as the XML stuff does not like DTD's.
     $jaCoCoReport = '<?xml version="1.0" encoding="UTF-8" standalone="no"?>'
     $jaCoCoReport += '<report name="">'
@@ -918,26 +885,15 @@ function Get-JaCoCoReportXml {
     $reportElement.sessioninfo.dump = $endTime.ToString()
 
     foreach ($package in $packageList) {
-        $packageRelativePath = Get-RelativePath -Path $package.Name -RelativeTo $commonParent
+        $packageRelativePath = Get-RelativePath -Path $package.Name -RelativeTo $ReportRoot
 
-        # e.g. "." for gutters, and "package" for non gutters in root
-        # and "sub-dir" for gutters, and "package/sub-dir" for non-gutters
+        # "." for root and "sub-dir" for non-root, e.g. "." or "src", "src/myCode"
         $packageName = if ($null -eq $packageRelativePath -or "" -eq $packageRelativePath) {
-            if ($isGutters) {
-                "."
-            }
-            else {
-                $commonParentLeaf
-            }
+            "."
         }
         else {
             $packageRelativePathFormatted = $packageRelativePath.Replace("\", "/")
-            if ($isGutters) {
-                $packageRelativePathFormatted
-            }
-            else {
-                "$commonParentLeaf/$packageRelativePathFormatted"
-            }
+            $packageRelativePathFormatted
         }
 
         $packageElement = Add-XmlElement -Parent $reportElement -Name 'package' -Attributes @{
@@ -946,22 +902,12 @@ function Get-JaCoCoReportXml {
 
         foreach ($file in $package.Classes.Keys) {
             $class = $package.Classes.$file
-            $classElementRelativePath = (Get-RelativePath -Path $file -RelativeTo $commonParent).Replace("\", "/")
-            $classElementName = if ($isGutters) {
-                $classElementRelativePath
-            }
-            else {
-                "$commonParentLeaf/$classElementRelativePath"
-            }
+            $classElementRelativePath = (Get-RelativePath -Path $file -RelativeTo $ReportRoot).Replace("\", "/")
+            $classElementName = $classElementRelativePath
             $classElementName = $classElementName.Substring(0, $($classElementName.LastIndexOf(".")))
             $classElement = Add-XmlElement -Parent $packageElement -Name 'class' -Attributes ([ordered] @{
                     name           = $classElementName
-                    sourcefilename = if ($isGutters) {
-                        & $SafeCommands["Split-Path"] $classElementRelativePath -Leaf
-                    }
-                    else {
-                        $classElementRelativePath
-                    }
+                    sourcefilename = & $SafeCommands["Split-Path"] $classElementRelativePath -Leaf
                 })
 
             foreach ($function in $class.Methods.Keys) {
@@ -984,14 +930,9 @@ function Get-JaCoCoReportXml {
 
         foreach ($file in $package.Classes.Keys) {
             $class = $package.Classes.$file
-            $classElementRelativePath = (Get-RelativePath -Path $file -RelativeTo $commonParent).Replace("\", "/")
+            $classElementRelativePath = (Get-RelativePath -Path $file -RelativeTo $ReportRoot).Replace("\", "/")
             $sourceFileElement = Add-XmlElement -Parent $packageElement -Name 'sourcefile' -Attributes ([ordered] @{
-                    name = if ($isGutters) {
-                        & $SafeCommands["Split-Path"] $classElementRelativePath -Leaf
-                    }
-                    else {
-                        $classElementRelativePath
-                    }
+                    name = & $SafeCommands["Split-Path"] $classElementRelativePath -Leaf
                 })
 
             foreach ($line in $class.Lines.Keys) {
@@ -1033,7 +974,9 @@ function Get-CoberturaReportXml {
         [parameter(Mandatory = $true)]
         [object] $CoverageReport,
         [parameter(Mandatory = $true)]
-        [long] $TotalMilliseconds
+        [long] $TotalMilliseconds,
+        [parameter(Mandatory = $true)]
+        [string] $ReportRoot
     )
 
     if ($null -eq $CoverageReport -or $CoverageReport.NumberOfCommandsAnalyzed -eq 0) {
@@ -1043,8 +986,6 @@ function Get-CoberturaReportXml {
     # Report uses unix epoch time format (milliseconds since midnight 1/1/1970 UTC)
     [long] $endTime = [System.DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
     [long] $startTime = [math]::Floor($endTime - $TotalMilliseconds)
-
-    $commonRoot = Get-CommonParentPath -Path $CoverageReport.AnalyzedFiles
 
     $allLines = [System.Collections.Generic.List[object]]@()
     $allLines.AddRange($CoverageReport.MissedCommands)
@@ -1114,7 +1055,7 @@ function Get-CoberturaReportXml {
             $coveredLines = foreach ($line in $lines) { if (0 -lt $line.attributes.hits) { $line } }
 
             $lineRate = Get-LineRate -CoveredLines $coveredLines.Length -TotalLines $lines.Length
-            $filename = $classGroup.Name.Substring($commonRoot.Length).Replace('\', '/').TrimStart('/')
+            $filename = $classGroup.Name.Substring($ReportRoot.Length).Replace('\', '/').TrimStart('/')
 
             $class = [ordered]@{
                 name         = 'class'
@@ -1138,7 +1079,7 @@ function Get-CoberturaReportXml {
         $totalLines = ($classes.totalLines | & $SafeCommands["Measure-Object"] -Sum).Sum
         $coveredLines = ($classes.coveredLines | & $SafeCommands["Measure-Object"] -Sum).Sum
         $lineRate = Get-LineRate -CoveredLines $coveredLines -TotalLines $totalLines
-        $packageName = $packageGroup.Name.Substring($commonRoot.Length).Replace('\', '/').TrimStart('/')
+        $packageName = $packageGroup.Name.Substring($ReportRoot.Length).Replace('\', '/').TrimStart('/')
 
         $package = [ordered]@{
             name         = 'package'
@@ -1176,7 +1117,7 @@ function Get-CoberturaReportXml {
         children   = [ordered]@{
             sources  = [ordered]@{
                 name  = 'source'
-                value = $commonRoot.Replace('\', '/')
+                value = $ReportRoot.Replace('\', '/')
             }
             packages = $packages | & $SafeCommands["Sort-Object"] { $_.attributes.name }
         }
@@ -1287,10 +1228,13 @@ function Add-JaCoCoCounter {
         })
 }
 
-function Start-TraceScript ($Breakpoints) {
+# Translate the breakpoints into the coordinates the tracer records hits at. Split out of
+# Start-TraceScript so a caller that already has the points can reuse them instead of doing this
+# again: it walks the Ast of every analyzed file, which is the expensive part of a coverage run.
+function Get-TracerPoint ($Breakpoints) {
 
     $points = [Collections.Generic.List[Pester.Tracing.CodeCoveragePoint]]@()
-    foreach ($breakpoint in $breakpoints) {
+    foreach ($breakpoint in $Breakpoints) {
         $location = $breakpoint.BreakpointLocation
 
         $hitColumn = $location.Column
@@ -1315,7 +1259,18 @@ function Start-TraceScript ($Breakpoints) {
         $points.Add([Pester.Tracing.CodeCoveragePoint]::Create($location.Script, $hitLine, $hitColumn, $location.Line, $location.Column, $breakpoint.Command))
     }
 
-    $tracer = [Pester.Tracing.CodeCoverageTracer]::Create($points)
+    , $points
+}
+
+function Start-TraceScript ($Breakpoints, $Points) {
+
+    # Points are the already translated breakpoints. test.ps1 passes them in, so that the child
+    # processes it starts do not each redo the translation for the same source tree.
+    if ($null -eq $Points) {
+        $Points = Get-TracerPoint -Breakpoints $Breakpoints
+    }
+
+    $tracer = [Pester.Tracing.CodeCoverageTracer]::Create($Points)
 
     # detect if profiler is imported and running and in that case just add us as a second tracer
     # to not disturb the profiling session
@@ -1335,7 +1290,7 @@ function Start-TraceScript ($Breakpoints) {
 
     if (-not $registered) {
 
-        # detect if code coverage is enabled throuh Pester tracer, and in that case just add us as a second tracer
+        # detect if code coverage is enabled through Pester tracer, and in that case just add us as a second tracer
         if (1 -eq $env:PESTER_CC_IN_CC -and [Pester.Tracing.Tracer]::ShouldRegisterTracer($tracer, <# overwrite: #> $false)) {
             $patched = $false
             $registered = $true
@@ -1387,14 +1342,6 @@ function Get-TracerHitLocation ($command) {
         function Write-Host { }
     }
     # function Write-Host { }
-    function Show-ParentList ($command) {
-        $c = $command
-        "`n`nCommand: $c" | Write-Host
-        $(for ($ast = $c; $null -ne $ast; $ast = $ast.Parent) {
-                $ast | Select-Object @{n = 'type'; e = { $_.GetType().Name } } , @{n = 'extent'; e = { $_.extent } }
-            } ) | Format-Table type, extent | Out-String | Write-Host
-    }
-
     if ($env:PESTER_CC_DEBUG -eq 1) {
         Write-Host "Processing '$command' at $($command.Extent.StartLineNumber):$($command.Extent.StartColumnNumber) which is $($command.GetType().Name)."
     }

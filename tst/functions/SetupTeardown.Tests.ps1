@@ -63,16 +63,12 @@ Describe 'Multiple Test Case setup blocks' {
     }
 
     Context 'The context' {
-        It 'Executes Describe setup blocks first, then Context blocks in the order they were defined (even if they are defined after the It block.)' {
-            $testVariable | Should -Be 'Set in the second Context BeforeEach'
+        It 'Executes Describe setup blocks first, then Context block' {
+            $testVariable | Should -Be 'Set in Context BeforeEach'
         }
 
         BeforeEach {
-            $testVariable = 'Set in the first Context BeforeEach'
-        }
-
-        BeforeEach {
-            $testVariable = 'Set in the second Context BeforeEach'
+            $testVariable = 'Set in Context BeforeEach'
         }
     }
 
@@ -113,18 +109,14 @@ Describe 'Multiple Test Case teardown blocks' {
 
     Context 'The context' {
         AfterEach {
-            $container.Value = 'Set in the first Context AfterEach'
+            $container.Value = 'Set in the Context AfterEach'
         }
 
         It 'Performs a test in Context' { "some output" }
 
         It 'Executes Describe teardown blocks after Context teardown blocks' {
-            $container.Value | Should -Be 'Set in the second Describe AfterEach'
+            $container.Value | Should -Be 'Set in Describe AfterEach'
         }
-    }
-
-    AfterEach {
-        $container.Value = 'Set in the second Describe AfterEach'
     }
 }
 
@@ -210,29 +202,83 @@ Describe 'Unbound scriptsblocks as input' {
     }
 }
 
-# if ($PSVersionTable.PSVersion.Major -ge 3) {
-#     # TODO: this depends on the old pester internals it would be easier to test in P
-#     $thisTestScriptFilePath = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($PSCommandPath)
+Describe 'Multiple setup and teardown blocks in the same block' {
+    # A block used to allow only one of each. That made it impossible to combine a file's own
+    # BeforeAll with setup coming from a Pester.BeforeContainer.ps1 higher up the folder tree, so
+    # they are collected into a list instead. Setups run in the order they were registered and
+    # teardowns run in reverse, so the last one registered undoes its work first.
+    It 'Runs every BeforeAll in the order they are declared' {
+        $sb = {
+            Describe 'd' {
+                BeforeAll { $script:order = @('first') }
+                BeforeAll { $script:order += 'second' }
+                It 'i' { $script:order -join '>' | Should -Be 'first>second' }
+            }
+        }
+        $c = New-PesterConfiguration
+        $c.Run.ScriptBlock = $sb
+        $c.Run.PassThru = $true
+        $c.Output.Verbosity = 'None'
+        $r = Invoke-Pester -Configuration $c
+        $r.FailedCount | Should -Be 0
+        $r.PassedCount | Should -Be 1
+    }
 
-#     Describe 'Script Blocks and file association (testing automatic variables)' {
-#         BeforeEach {
-#             $commandPath = $PSCommandPath
-#         }
+    It 'Runs every BeforeEach in the order they are declared' {
+        $sb = {
+            Describe 'd' {
+                BeforeEach { $script:order = @('first') }
+                BeforeEach { $script:order += 'second' }
+                It 'i' { $script:order -join '>' | Should -Be 'first>second' }
+            }
+        }
+        $c = New-PesterConfiguration
+        $c.Run.ScriptBlock = $sb
+        $c.Run.PassThru = $true
+        $c.Output.Verbosity = 'None'
+        $r = Invoke-Pester -Configuration $c
+        $r.FailedCount | Should -Be 0
+        $r.PassedCount | Should -Be 1
+    }
 
-#         $beforeEachBlock = InPesterModuleScope {
-#             $pester.CurrentTestGroup.BeforeEach[0]
-#         }
+    It 'Runs every AfterAll in reverse order' {
+        $script:afterAllOrder = $null
+        $sb = {
+            Describe 'd' {
+                AfterAll { $global:PesterTestAfterAllOrder += 'first' }
+                AfterAll { $global:PesterTestAfterAllOrder += 'second' }
+                It 'i' { $true | Should -BeTrue }
+            }
+        }
+        $global:PesterTestAfterAllOrder = @()
+        $c = New-PesterConfiguration
+        $c.Run.ScriptBlock = $sb
+        $c.Run.PassThru = $true
+        $c.Output.Verbosity = 'None'
+        $r = Invoke-Pester -Configuration $c
 
-#         It 'Creates script block objects associated with the proper file' {
-#             $scriptBlockFilePath = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($beforeEachBlock.File)
+        $r.FailedCount | Should -Be 0
+        $global:PesterTestAfterAllOrder -join '>' | Should -Be 'second>first'
+        Remove-Variable -Name PesterTestAfterAllOrder -Scope Global -ErrorAction Ignore
+    }
 
-#             $scriptBlockFilePath | Should -Be $thisTestScriptFilePath
-#         }
+    It 'Runs every AfterEach in reverse order' {
+        $sb = {
+            Describe 'd' {
+                AfterEach { $global:PesterTestAfterEachOrder += 'first' }
+                AfterEach { $global:PesterTestAfterEachOrder += 'second' }
+                It 'i' { $true | Should -BeTrue }
+            }
+        }
+        $global:PesterTestAfterEachOrder = @()
+        $c = New-PesterConfiguration
+        $c.Run.ScriptBlock = $sb
+        $c.Run.PassThru = $true
+        $c.Output.Verbosity = 'None'
+        $r = Invoke-Pester -Configuration $c
 
-#         It 'Has the correct automatic variable values inside the BeforeEach block' {
-#             $commandPath | Should -Be $PSCommandPath
-#         }
-#     }
-#}
-
-#Testing if failing setup or teardown will fail 'It' is done in the TestsRunningInCleanRunspace.Tests.ps1 file
+        $r.FailedCount | Should -Be 0
+        $global:PesterTestAfterEachOrder -join '>' | Should -Be 'second>first'
+        Remove-Variable -Name PesterTestAfterEachOrder -Scope Global -ErrorAction Ignore
+    }
+}

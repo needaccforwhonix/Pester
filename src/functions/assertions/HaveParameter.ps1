@@ -19,7 +19,7 @@
         This test passes, because it expected the parameter URI to exist and to
         be mandatory.
     .NOTES
-        The attribute [ArgumentCompleter] was added with PSv5. Previouse this
+        The attribute [ArgumentCompleter] was added with PSv5. Previous this
         assertion will not be able to use the -HasArgumentCompleter parameter
         if the attribute does not exist.
     #>
@@ -109,7 +109,7 @@
     function Get-DefaultValue {
         param($DefaultValue)
 
-        # This is a value like 1, or 0, return it direcly.
+        # This is a value like 1, or 0, return it directly.
         if ($DefaultValue.PSObject.Properties["Value"]) {
             return $DefaultValue.Value
         }
@@ -262,15 +262,26 @@
     if ($buts.Count -eq 0) {
         # Parameter exists (in set if specified), assert remaining requirements
 
-        if ($Mandatory) {
+        if ($PSBoundParameters.ContainsKey('Mandatory')) {
             $testMandatory = $parameterAttributes | & $SafeCommands['Where-Object'] { $_.Mandatory }
-            $filters += "which is$(if ($Negate) {' not'}) mandatory"
 
-            if (-not $Negate -and -not $testMandatory) {
-                $buts += "it wasn't mandatory"
+            if ($Mandatory) {
+                $filters += "which is$(if ($Negate) {' not'}) mandatory"
+
+                if (-not $Negate -and -not $testMandatory) {
+                    $buts += "it wasn't mandatory"
+                }
+                elseif ($Negate -and $testMandatory) {
+                    $buts += 'it was mandatory'
+                }
             }
-            elseif ($Negate -and $testMandatory) {
-                $buts += 'it was mandatory'
+            else {
+                # Explicit -Mandatory:$false means "parameter must NOT be mandatory"
+                $filters += "which is not mandatory"
+
+                if ($testMandatory) {
+                    $buts += 'it was mandatory'
+                }
             }
         }
 
@@ -318,19 +329,35 @@
             }
         }
 
-        if ($HasArgumentCompleter) {
+        if ($PSBoundParameters.ContainsKey('HasArgumentCompleter')) {
             $testArgumentCompleter = $attributes | & $SafeCommands['Where-Object'] { $_ -is [ArgumentCompleter] }
 
             if (-not $testArgumentCompleter) {
-                $testArgumentCompleter = Get-ArgumentCompleter -CommandName $ActualValue.Name -ParameterName $ParameterName
+                try {
+                    $testArgumentCompleter = Get-ArgumentCompleter -CommandName $ActualValue.Name -ParameterName $ParameterName
+                }
+                catch {
+                    # Get-ArgumentCompleter uses reflection that may fail on some PS versions
+                }
             }
-            $filters += 'has ArgumentCompletion'
 
-            if (-not $Negate -and -not $testArgumentCompleter) {
-                $buts += 'has no ArgumentCompletion'
+            if ($HasArgumentCompleter) {
+                $filters += 'has ArgumentCompletion'
+
+                if (-not $Negate -and -not $testArgumentCompleter) {
+                    $buts += 'has no ArgumentCompletion'
+                }
+                elseif ($Negate -and $testArgumentCompleter) {
+                    $buts += 'has ArgumentCompletion'
+                }
             }
-            elseif ($Negate -and $testArgumentCompleter) {
-                $buts += 'has ArgumentCompletion'
+            else {
+                # Explicit -HasArgumentCompleter:$false means "parameter must NOT have argument completer"
+                $filters += 'has no ArgumentCompletion'
+
+                if ($testArgumentCompleter) {
+                    $buts += 'has ArgumentCompletion'
+                }
             }
         }
 

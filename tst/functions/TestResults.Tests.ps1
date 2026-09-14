@@ -91,4 +91,123 @@ InPesterModuleScope {
         Pop-Location
 
     }
+
+    # Regression tests for https://github.com/pester/Pester/issues/2678
+    # Get-CimInstance can fail with access denied when not running as Administrator.
+    # The fix adds -ErrorAction Ignore and a fallback to Unknown values so the report
+    # is not broken just because OS info is unavailable.
+    Describe "Get-RunTimeEnvironment" {
+        It "Returns a hashtable with expected keys without throwing" {
+            $result = Get-RunTimeEnvironment
+            $result | Should -BeOfType [hashtable]
+            $result.Keys | Should -Contain 'os-version'
+            $result.Keys | Should -Contain 'platform'
+            $result.Keys | Should -Contain 'machine-name'
+            $result.Keys | Should -Contain 'user'
+            $result.Keys | Should -Contain 'cwd'
+            $result.Keys | Should -Contain 'clr-version'
+            $result['os-version'] | Should -Not -BeNullOrEmpty
+            $result['platform']   | Should -Not -BeNullOrEmpty
+        }
+
+        It "Falls back to Unknown OS info when Get-CimInstance returns null (access denied)" -Skip:(-not $IsWindows) {
+            # Simulate -ErrorAction Ignore swallowing an access-denied error: the call returns $null.
+            # Before the fix, $osSystemInformation stayed $null and $osSystemInformation.Version
+            # silently produced $null fields in the report; an ugly access-denied error was also
+            # printed because -ErrorAction Ignore was missing.
+            $originalCim = $SafeCommands['Get-CimInstance']
+            $originalWmi = $SafeCommands['Get-WmiObject']
+            try {
+                $SafeCommands['Get-CimInstance'] = { param($Class) }
+                if ($null -ne $originalWmi) {
+                    $SafeCommands['Get-WmiObject'] = { param($Class) }
+                }
+
+                $result = Get-RunTimeEnvironment
+
+                $result['platform']   | Should -Be 'Unknown'
+                $result['os-version'] | Should -Be '0.0.0.0'
+            }
+            finally {
+                $SafeCommands['Get-CimInstance'] = $originalCim
+                if ($null -ne $originalWmi) {
+                    $SafeCommands['Get-WmiObject'] = $originalWmi
+                }
+            }
+        }
+    }
+}
+
+# Regression tests for https://github.com/pester/Pester/issues/2641
+# Relative report output paths must resolve against the directory Invoke-Pester was called from,
+# not the current location after the run. A test can change the current location (e.g. Set-Location),
+# and reports are written after all tests ran, so the path is resolved eagerly during configuration.
+Describe 'Relative report output paths (#2641)' {
+    It 'writes the TestResult report next to the invocation directory when a test changes the location' {
+        $runFrom = (New-Item -ItemType Directory -Path (Join-Path $TestDrive 'tr-run-from') -Force).FullName
+        $elsewhere = (New-Item -ItemType Directory -Path (Join-Path $TestDrive 'tr-elsewhere') -Force).FullName
+
+        $sb = {
+            Describe 'd' {
+                It 'changes the current location' {
+                    Set-Location $Elsewhere
+                }
+            }
+        }
+        $container = New-PesterContainer -ScriptBlock $sb -Data @{ Elsewhere = $elsewhere }
+
+        $conf = New-PesterConfiguration
+        $conf.Run.Container = $container
+        $conf.Run.PassThru = $true
+        $conf.Output.Verbosity = 'None'
+        $conf.TestResult.Enabled = $true
+        $conf.TestResult.OutputPath = 'testResults.xml'
+
+        Push-Location -Path $runFrom
+        try {
+            $r = Invoke-Pester -Configuration $conf
+        }
+        finally {
+            Pop-Location
+        }
+
+        $r.Result | Should -Be 'Passed'
+        Should -Exist -ActualValue (Join-Path $runFrom 'testResults.xml')
+        Should -Not -Exist -ActualValue (Join-Path $elsewhere 'testResults.xml')
+    }
+
+    It 'writes the CodeCoverage report next to the invocation directory when a test changes the location' {
+        $runFrom = (New-Item -ItemType Directory -Path (Join-Path $TestDrive 'cc-run-from') -Force).FullName
+        $elsewhere = (New-Item -ItemType Directory -Path (Join-Path $TestDrive 'cc-elsewhere') -Force).FullName
+        $covered = Join-Path $TestDrive 'covered.ps1'
+        Set-Content -Path $covered -Value 'function Get-Thing { 1 + 1 }'
+
+        $sb = {
+            Describe 'd' {
+                It 'changes the current location' {
+                    Set-Location $Elsewhere
+                }
+            }
+        }
+        $container = New-PesterContainer -ScriptBlock $sb -Data @{ Elsewhere = $elsewhere }
+
+        $conf = New-PesterConfiguration
+        $conf.Run.Container = $container
+        $conf.Run.PassThru = $true
+        $conf.Output.Verbosity = 'None'
+        $conf.CodeCoverage.Enabled = $true
+        $conf.CodeCoverage.Path = $covered
+        $conf.CodeCoverage.OutputPath = 'coverage.xml'
+
+        Push-Location -Path $runFrom
+        try {
+            $null = Invoke-Pester -Configuration $conf
+        }
+        finally {
+            Pop-Location
+        }
+
+        Should -Exist -ActualValue (Join-Path $runFrom 'coverage.xml')
+        Should -Not -Exist -ActualValue (Join-Path $elsewhere 'coverage.xml')
+    }
 }

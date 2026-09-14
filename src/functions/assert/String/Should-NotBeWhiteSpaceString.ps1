@@ -3,6 +3,9 @@
     .SYNOPSIS
     Ensures that the input is a string, and that the input is not $null, empty, or whitespace only string.
 
+    .DESCRIPTION
+    This assertion requires a string that contains at least one non-whitespace character. It fails for `$null, `""`, whitespace-only strings, and non-string values.
+
     .PARAMETER Actual
     The actual value that will be compared.
 
@@ -26,7 +29,7 @@
     This test will fail, the input is a whitespace only string.
 
     .EXAMPLE
-    ```
+    ```powershell
     $null | Should-NotBeWhiteSpaceString
     "" | Should-NotBeWhiteSpaceString
     $() | Should-NotBeWhiteSpaceString
@@ -36,6 +39,11 @@
 
     All the tests above will fail, the input is not a string.
 
+    .NOTES
+    Use the `-ErrorAction` parameter to control soft-assertion behavior for this assertion. `-ErrorAction Continue` records the failure and lets the rest of the test run (a soft assertion), while `-ErrorAction Stop` fails the test immediately, for example to guard a precondition before continuing.
+
+    When `-ErrorAction` is not specified, the behavior comes from `Should.ErrorAction` in the configuration, which defaults to `Stop`. See https://pester.dev/docs/assertions/soft-assertions for more about soft assertions.
+
     .LINK
     https://pester.dev/docs/commands/Should-NotBeWhiteSpaceString
 
@@ -43,17 +51,17 @@
     https://pester.dev/docs/assertions
     #>
     [System.Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSUseProcessBlockForPipelineCommand', '')]
+    [CmdletBinding()]
     param (
         [Parameter(Position = 0, ValueFromPipeline = $true)]
         $Actual,
         [String]$Because
     )
 
-    $collectedInput = Collect-Input -ParameterInput $Actual -PipelineInput $local:Input -IsPipelineInput $MyInvocation.ExpectingInput -UnrollInput
-    $Actual = $collectedInput.Actual
+    $assert = New-ShouldAssertion -Caller $PSCmdlet -Actual $Actual -Buffer $local:Input
+    $Actual = $assert.Actual()
 
     if ($Actual -isnot [string] -or [string]::IsNullOrWhiteSpace($Actual)) {
-        $formattedMessage = Get-AssertionMessage -Actual $Actual -Because $Because -DefaultMessage "Expected a [string] that is not `$null, empty or whitespace,<because> but got <actualType>: <actual>" -Pretty
-        throw [Pester.Factory]::CreateShouldErrorRecord($formattedMessage, $MyInvocation.ScriptName, $MyInvocation.ScriptLineNumber, $MyInvocation.Line.TrimEnd([System.Environment]::NewLine), $true)
+        $assert.Fail("Expected a [string] that is not `$null, empty or whitespace,<because> but got <actualType>: <actual>", @{ Because = $Because }, $true)
     }
 }

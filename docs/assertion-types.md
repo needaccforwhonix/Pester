@@ -36,20 +36,18 @@ For this reason a value assertion will handle this as `1`, but a collection asse
 
 Another special case is `@()`. A value assertion will handle it as `$null`, but a collection assertion will handle it as `@()`.
 
-`$null` remains `$null` in both cases.
+A value assertion handles `$null` as `$null`. A collection assertion handles a piped `$null` as `@($null)`, because the pipeline sends a single `$null` item, which is indistinguishable from `@($null)`. The `-Actual` syntax keeps `$null` as `$null` for both.
 
 ```powershell
 # Should-Be is a value assertion:
 1 | Should-Be -Expected 1
 @(1) | Should-Be -Expected 1
 $null | Should-Be -Expected $null
-@() | Should-Be -Expected $null #< --- TODO: this is not the case right now, we special case this as empty array, but is that correct? it does not play well with the value and collection assertion, and we special case it just because we can.
-# $null | will give $local:input -> $null , and @() | will give $local:input -> @(), is that distinction important when we know that we will only check against values?
+@() | Should-Be -Expected $null
 
 # This fails, because -Expected does not allow collections.
 @() | Should-Be -Expected @()
-
-
+```
 
 ```powershell
 # Should-BeCollection is a collection assertion:
@@ -59,6 +57,16 @@ $null | Should-Be -Expected $null
 
 # This fails, because -Expected requires a collection.
 $null | Should-BeCollection -Expected $null
+```
+
+Pipeline input also loses the concrete collection type. A typed array like `[int[]](1, 2)` arrives as `[object[]]` once the pipeline unwraps and re-collects it, and a single-item typed array like `[int[]]@(1)` arrives as the bare element `[int]`. Use the `-Actual` syntax when you need to assert on the original collection type, it passes the value through unchanged:
+
+```powershell
+# The pipeline loses the [int[]] type, the value is now [object[]]:
+[int[]](1, 2) | Should-HaveType ([object[]])
+
+# -Actual preserves the original type:
+Should-HaveType -Actual ([int[]](1, 2)) -Expected ([int[]])
 ```
 
 ### Using the -Actual syntax
@@ -102,5 +110,23 @@ The `$Expected` accepts input that has the same type as the assertion type. E.g.
 ## Collection assertions
 
 
+
+## Hashtable and dictionary assertions
+
+`Should-BeHashtable` asserts on the *shape* of a hashtable or dictionary. It checks that the value is a dictionary (a `[hashtable]`, an `[ordered]@{}`, or any `System.Collections.IDictionary`), and optionally that it has a given number of entries (`-Count`), that it is ordered (`-Ordered`), or that it contains specific keys (`-Key`):
+
+```powershell
+# Asserts the value is a hashtable / dictionary:
+@{ Name = 'Jakub'; Age = 30 } | Should-BeHashtable
+
+# Optional shape checks:
+@{ Name = 'Jakub'; Age = 30 } | Should-BeHashtable -Count 2
+@{ Name = 'Jakub'; Age = 30 } | Should-BeHashtable -Key Name, Age
+[ordered]@{ a = 1; b = 2 } | Should-BeHashtable -Ordered -Key a, b
+```
+
+A dictionary is received as a single object, so it is piped in directly without being unwrapped, the same way a value assertion receives its input.
+
+`Should-BeHashtable` deliberately does not compare the *values* of the entries. To compare the keys and values of a dictionary against an expected dictionary, use `Should-BeEquivalent`, which performs a deep, order-insensitive comparison.
 
 These assertions are exported from the module as Assert-* functions and aliased to Should-*, this is because of PowerShell restricting multi word functions to a list of predefined approved verbs.

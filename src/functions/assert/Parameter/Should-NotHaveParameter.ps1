@@ -1,7 +1,10 @@
-function Should-NotHaveParameter {
+﻿function Should-NotHaveParameter {
     <#
     .SYNOPSIS
     Asserts that a command has does not have the parameter.
+
+    .DESCRIPTION
+    This assertion inspects command metadata to verify that a parameter is absent. It only checks the parameter name, unlike `Should-HaveParameter`, which can also validate parameter details.
 
     .PARAMETER ParameterName
     The name of the parameter to check. E.g. Uri
@@ -14,15 +17,26 @@ function Should-NotHaveParameter {
 
     .EXAMPLE
     ```powershell
-    Get-Command "Invoke-WebRequest" | Should -NotHaveParameter Uri
+    Get-Command Get-Date | Should-NotHaveParameter Uri
     ```
 
-    This test fails, because it expected the parameter URI to not exist.
+    This assertion passes, because `Get-Date` has no `-Uri` parameter.
+
+    .EXAMPLE
+    ```powershell
+    function Get-PublicReport {
+        param([string] $Name)
+    }
+
+    Get-Command Get-PublicReport | Should-NotHaveParameter Credential
+    ```
+
+    This assertion passes, because `Get-PublicReport` does not expose a `-Credential` parameter. This is useful for guarding against accidentally adding parameters you want to keep off a command's public surface.
 
     .NOTES
-    The attribute [ArgumentCompleter] was added with PSv5. Previously this
-    assertion will not be able to use the -HasArgumentCompleter parameter
-    if the attribute does not exist.
+    Use the `-ErrorAction` parameter to control soft-assertion behavior for this assertion. `-ErrorAction Continue` records the failure and lets the rest of the test run (a soft assertion), while `-ErrorAction Stop` fails the test immediately, for example to guard a precondition before continuing.
+
+    When `-ErrorAction` is not specified, the behavior comes from `Should.ErrorAction` in the configuration, which defaults to `Stop`. See https://pester.dev/docs/assertions/soft-assertions for more about soft assertions.
 
     .LINK
     https://pester.dev/docs/commands/Should-NotHaveParameter
@@ -33,15 +47,16 @@ function Should-NotHaveParameter {
 
 
     [System.Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSUseProcessBlockForPipelineCommand', '')]
-    param(
+    [CmdletBinding()]
+    param (
         [String] $ParameterName,
         [Parameter(ValueFromPipeline = $true)]
         $Actual,
         [String] $Because
     )
 
-    $collectedInput = Collect-Input -ParameterInput $Actual -PipelineInput $local:Input -IsPipelineInput $MyInvocation.ExpectingInput -UnrollInput
-    $Actual = $collectedInput.Actual
+    $assert = New-ShouldAssertion -Caller $PSCmdlet -Actual $Actual -Buffer $local:Input
+    $Actual = $assert.Actual()
 
     $PSBoundParameters["ActualValue"] = $Actual
     $PSBoundParameters.Remove("Actual")
@@ -49,5 +64,7 @@ function Should-NotHaveParameter {
 
     $testResult = Should-HaveParameterAssertion @PSBoundParameters
 
-    Test-AssertionResult $testResult
+    if (-not $testResult.Succeeded) {
+        $assert.Fail($testResult.FailureMessage)
+    }
 }

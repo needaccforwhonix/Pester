@@ -15,6 +15,9 @@
 // to have in "type accelerator" form, but without the hassle of actually adding it as a type accelerator
 // that way you can easily do `[PesterConfiguration]::Default` and then inspect it, or cast a hashtable to it
 
+using System.Collections.Generic;
+using System.Reflection;
+
 namespace Pester
 {
     public abstract class ConfigurationSection
@@ -28,6 +31,53 @@ namespace Pester
         public override string ToString()
         {
             return _description;
+        }
+
+        /// <summary>
+        /// Names of the options this section has. A method and not a property so it stays out of the
+        /// section's console output, which lists the options and their documentation.
+        /// </summary>
+        public string[] GetOptionNames()
+        {
+            var names = new List<string>();
+            foreach (var property in GetType().GetProperties(BindingFlags.Public | BindingFlags.Instance))
+            {
+                if (typeof(Option).IsAssignableFrom(property.PropertyType))
+                    names.Add(property.Name);
+            }
+
+            return names.ToArray();
+        }
+
+        /// <summary>
+        /// If this section has an Enabled option that was not explicitly modified,
+        /// and any other option in the section was modified, auto-enable the section.
+        /// </summary>
+        public void ResolveEnabled()
+        {
+            var enabledProperty = GetType().GetProperty("Enabled", BindingFlags.Public | BindingFlags.Instance);
+            if (enabledProperty == null || enabledProperty.PropertyType != typeof(BoolOption))
+                return;
+
+            var enabled = (BoolOption)enabledProperty.GetValue(this);
+            if (enabled == null || enabled.IsModified)
+                return;
+
+            foreach (var property in GetType().GetProperties(BindingFlags.Public | BindingFlags.Instance))
+            {
+                if (property.Name == "Enabled")
+                    continue;
+
+                if (!typeof(Option).IsAssignableFrom(property.PropertyType))
+                    continue;
+
+                var option = (Option)property.GetValue(this);
+                if (option != null && option.IsModified)
+                {
+                    enabledProperty.SetValue(this, (BoolOption)true);
+                    return;
+                }
+            }
         }
     }
 }

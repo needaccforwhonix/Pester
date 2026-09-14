@@ -65,6 +65,7 @@ param (
 )
 
 $ErrorActionPreference = 'Stop'
+$ErrorView = 'NormalView'
 Get-Module Pester | Remove-Module
 
 if ($Clean -and $PSVersionTable.PSVersion -lt [version]'5.1') {
@@ -105,6 +106,10 @@ if ($Clean) {
     }
 
     function Format-NicelyMini ($value) {
+        if ($null -eq $value) {
+            return '$null'
+        }
+
         if ($value -is [bool]) {
             if ($value) {
                 '$true'
@@ -148,7 +153,12 @@ if ($Clean) {
         foreach ($r in $section.PSObject.Properties.Name) {
             $option = $section.$r
             $default = Format-NicelyMini $option.Default
-            $type = $option.Default.GetType() -as [string]
+            if ("RepoRoot" -eq $r) {
+                # RepoRoot is a special case, because it is not actually an option, but a property that returns the value of the option. This is done to make it easier to use in scripts, but it causes issues when generating help, because it does not have a default value. So we need to get the default value from the actual option.
+                $default = Format-NicelyMini '<path of .git>'
+            }
+            # When the value is null this would throw if we checked the type of default value.
+            $type = $option.GetType().BaseType.GenericTypeArguments[0] -as [string]
             "    ${r}: $($option.Description)$eol    Type: ${type}$eol    Default value: ${default}$eol"
         }
     }
@@ -196,9 +206,12 @@ function Copy-Content ($Content) {
 
 $content = @(
     , ("$PSScriptRoot/src/en-US/*.txt", "$PSScriptRoot/bin/en-US/")
-    , ("$PSScriptRoot/src/Pester.ps1", "$PSScriptRoot/bin/")
+    , ("$PSScriptRoot/src/Pester.ScriptScope.ps1", "$PSScriptRoot/bin/")
     , ("$PSScriptRoot/src/Pester.psd1", "$PSScriptRoot/bin/")
     , ("$PSScriptRoot/src/Pester.Format.ps1xml", "$PSScriptRoot/bin/")
+    # Pester.dll has DiffPlex compiled into it, and Apache-2.0 asks that whoever gets the binary
+    # gets the licence with it, so the notices file has to be in the module, not only in the repo.
+    , ("$PSScriptRoot/ThirdPartyNotices.txt", "$PSScriptRoot/bin/")
 )
 
 if ($Clean) {

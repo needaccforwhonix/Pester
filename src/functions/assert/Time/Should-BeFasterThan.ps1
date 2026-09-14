@@ -3,6 +3,9 @@
     .SYNOPSIS
     Asserts that the provided [timespan] or [scriptblock] is faster than the expected [timespan].
 
+    .DESCRIPTION
+    This assertion accepts either a `[timespan]` or a script block to measure. Fluent time values such as `1s` are converted to a `[timespan]` before the comparison.
+
     .PARAMETER Actual
     The actual [timespan] or [scriptblock] value.
 
@@ -29,6 +32,10 @@
     .NOTES
     The `Should-BeFasterThan` assertion is the opposite of the `Should-BeSlowerThan` assertion.
 
+    Use the `-ErrorAction` parameter to control soft-assertion behavior for this assertion. `-ErrorAction Continue` records the failure and lets the rest of the test run (a soft assertion), while `-ErrorAction Stop` fails the test immediately, for example to guard a precondition before continuing.
+
+    When `-ErrorAction` is not specified, the behavior comes from `Should.ErrorAction` in the configuration, which defaults to `Stop`. See https://pester.dev/docs/assertions/soft-assertions for more about soft assertions.
+
     .LINK
     https://pester.dev/docs/commands/Should-BeFasterThan
 
@@ -36,10 +43,11 @@
     https://pester.dev/docs/assertions
     #>
     [System.Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSUseProcessBlockForPipelineCommand', '')]
+    [CmdletBinding()]
     param (
         [Parameter(Position = 1, ValueFromPipeline = $true)]
         $Actual,
-        [Parameter(Position = 0)]
+        [Parameter(Position = 0, Mandatory)]
         $Expected,
         [string] $Because
     )
@@ -48,8 +56,8 @@
         $Expected = Get-TimeSpanFromStringWithUnit -Value $Expected
     }
 
-    $collectedInput = Collect-Input -ParameterInput $Actual -PipelineInput $local:Input -IsPipelineInput $MyInvocation.ExpectingInput -UnrollInput
-    $Actual = $collectedInput.Actual
+    $assert = New-ShouldAssertion -Caller $PSCmdlet -Actual $Actual -Buffer $local:Input
+    $Actual = $assert.Actual()
 
     if ($Actual -is [scriptblock]) {
         $sw = [System.Diagnostics.Stopwatch]::StartNew()
@@ -57,17 +65,22 @@
         $sw.Stop()
 
         if ($sw.Elapsed -ge $Expected) {
-            $Message = Get-AssertionMessage -Expected $Expected -Actual $sw.Elapsed -Because $Because -Data @{ scriptblock = $Actual } -DefaultMessage "Expected the provided [scriptblock] to execute faster than <expectedType> <expected>,<because> but it took <actual> to run.`nScriptBlock: <scriptblock>"
-            throw [Pester.Factory]::CreateShouldErrorRecord($Message, $MyInvocation.ScriptName, $MyInvocation.ScriptLineNumber, $MyInvocation.Line.TrimEnd([System.Environment]::NewLine), $true)
+            $assert.Fail("Expected the provided [scriptblock] to execute faster than <expectedType> <expected>,<because> but it took <actual> to run.`nScriptBlock: <scriptblock>", @{ Expected = $Expected; Actual = $sw.Elapsed; Because = $Because; scriptblock = $Actual })
         }
         return
     }
 
     if ($Actual -is [timespan]) {
         if ($Actual -ge $Expected) {
-            $Message = Get-AssertionMessage -Expected $Expected -Actual $Actual -Because $Because -DefaultMessage "The provided [timespan] should be shorter than <expectedType> <expected>,<because> but it was longer: <actual>"
-            throw [Pester.Factory]::CreateShouldErrorRecord($Message, $MyInvocation.ScriptName, $MyInvocation.ScriptLineNumber, $MyInvocation.Line.TrimEnd([System.Environment]::NewLine), $true)
+            $assert.Fail("The provided [timespan] should be shorter than <expectedType> <expected>,<because> but it was longer: <actual>", @{ Expected = $Expected; Actual = $Actual; Because = $Because })
         }
         return
     }
+
+    # Neither branch matched. Both branches above return, so reaching here means we were handed
+    # something we cannot measure or compare. Without this the assertion would return having done
+    # nothing and the test would pass, which is the worst way to fail. It also hid a CI flake: a
+    # test asserting that a 10ms sleep is slower than 1ms failed while the whole test took 3ms,
+    # because the scriptblock was never run and nothing said so.
+    $assert.Fail("Expected a [scriptblock] to measure or a [timespan] to compare,<because> but got <actualType> <actual>.", @{ Actual = $Actual; Because = $Because })
 }
